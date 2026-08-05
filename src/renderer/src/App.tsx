@@ -259,8 +259,13 @@ function App(): React.JSX.Element {
   }
 
   const hostKeyFingerprintLabel = (message: string): string => {
-    const match = message.match(/SHA256:[A-Za-z0-9+/=]+/)
-    return match ? `SHA256:\n${match[0].slice('SHA256:'.length)}` : message
+    // Go's HOST_KEY_CHANGED error carries both keys
+    // ("was SHA256:<old>, now SHA256:<new>"); the dialog must show the NEW
+    // key being accepted, so take the last SHA256 match (HOST_KEY_UNKNOWN has
+    // a single match, so last == first and is unaffected).
+    const matches = message.match(/SHA256:[A-Za-z0-9+/=]+/g)
+    const last = matches?.[matches.length - 1]
+    return last ? `SHA256:\n${last.slice('SHA256:'.length)}` : message
   }
 
   const handleLanguageChange = async (next: LanguageCode): Promise<void> => {

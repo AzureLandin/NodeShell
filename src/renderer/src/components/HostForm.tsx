@@ -140,6 +140,7 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
             setAuthMethod(v as AuthMethod)
             setFormError(null)
           }}
+          aria-label={t('form.auth')}
           options={[
             { value: 'password', label: t('form.password') },
             { value: 'privateKey', label: t('form.privateKey') }

@@ -103,11 +103,13 @@ export function SftpPanel({
         setCwd('/')
         setError(null)
         setSelectedPath(null)
+        setTransfer(null)
         loadedForSessionRef.current = null
       }
       return
     }
     if (expanded && loadedForSessionRef.current !== sessionId) {
+      setTransfer(null)
       void refresh()
     }
   }, [expanded, connected, sessionId, refresh])
@@ -142,6 +144,25 @@ export function SftpPanel({
       unsub()
     }
   }, [sessionId])
+
+  // Native file drops (Wails OnFileDrop) arrive as events with absolute
+  // paths — the DOM File objects carry none. The upload targets the session
+  // that is current when the drop lands.
+  useEffect(() => {
+    if (!window.api.files.onDrop) return
+    return window.api.files.onDrop((paths) => {
+      if (!sessionId || !connected || paths.length === 0) return
+      setError(null)
+      void (async () => {
+        try {
+          await window.api.sftp.uploadPaths(sessionId, paths)
+          await refresh()
+        } catch (e) {
+          setError(e instanceof Error ? e.message : t('sftp.error'))
+        }
+      })()
+    })
+  }, [sessionId, connected, refresh, t])
 
   const openDir = async (name: string): Promise<void> => {
     if (!sessionId) return
@@ -258,6 +279,10 @@ export function SftpPanel({
     e.stopPropagation()
     resetDrag()
     if (!sessionId || !connected) return
+    // With native drops (Wails) the paths arrive via files.onDrop; the DOM
+    // drop carries pathless File objects, so only the Electron path resolves
+    // them here.
+    if (window.api.files.onDrop) return
 
     const files = Array.from(e.dataTransfer.files)
     const paths: string[] = []

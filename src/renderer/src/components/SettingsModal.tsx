@@ -170,6 +170,7 @@ function SettingsModalBody({
             <Select
               value={language}
               onChange={(v) => onLanguageChange(v as LanguageCode)}
+              aria-label={t('common.language')}
               options={[
                 { value: 'zh', label: '中文' },
                 { value: 'en', label: 'English' }
@@ -184,6 +185,7 @@ function SettingsModalBody({
               <Select
                 value={themePreference}
                 onChange={(v) => onThemePreferenceChange(v as ThemePreference)}
+                aria-label={t('settings.theme')}
                 options={[
                   { value: 'system', label: t('settings.themeSystem') },
                   { value: 'light', label: t('settings.themeLight') },
@@ -201,6 +203,7 @@ function SettingsModalBody({
               <Select
                 value={terminalFontFamily}
                 onChange={onTerminalFontFamilyChange}
+                aria-label={t('settings.fontFamily')}
                 options={fontSelectOptions}
               />
             </div>
@@ -214,6 +217,7 @@ function SettingsModalBody({
                   if (!Number.isFinite(n)) return
                   onTerminalFontSizeChange(n)
                 }}
+                aria-label={t('settings.fontSize')}
                 options={fontSizeOptions}
               />
             </div>
@@ -234,6 +238,7 @@ function SettingsModalBody({
                   if (!Number.isFinite(n)) return
                   onMcpIdleTimeoutMinutesChange(n)
                 }}
+                aria-label={t('settings.mcpIdleTimeout')}
                 options={idleOptions}
               />
             </div>
@@ -247,6 +252,7 @@ function SettingsModalBody({
                   if (!Number.isFinite(n)) return
                   onMcpMaxSessionsChange(n)
                 }}
+                aria-label={t('settings.mcpMaxSessions')}
                 options={maxSessionOptions}
               />
             </div>

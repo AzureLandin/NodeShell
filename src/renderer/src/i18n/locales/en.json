@@ -40,6 +40,11 @@
     "reconnect": "Reconnect",
     "placeholder": "Click Hosts in the top-left to connect"
   },
+  "terminal": {
+    "copy": "Copy",
+    "paste": "Paste",
+    "clearScreen": "Clear Screen"
+  },
   "auth": {
     "passwordTitle": "Password for {{name}}",
     "passwordLabel": "Password",
@@ -90,7 +95,7 @@
     "mcpMaxSessions": "Max concurrent sessions",
     "mcpHint": "Limits idle disconnect and concurrency for Agent SSH via MCP.",
     "mcpRegisterTitle": "Register with Agents",
-    "mcpRegisterHint": "Writes NodeShell into each Agent’s user-global MCP config without removing other servers. Requires Node.js on PATH; the installer ships the MCP launcher (no separate build).",
+    "mcpRegisterHint": "Writes NodeShell into each Agent’s user-global MCP config without removing other servers. Registers the native executable with the --mcp flag.",
     "mcpRegisterAll": "Register all",
     "mcpRegister": "Register",
     "mcpUpdate": "Update",

@@ -1,0 +1,268 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+            wails-args: -platform windows/amd64 -nsis
+            smoke-cmd: powershell -File scripts/mcp-smoke.ps1
+            smoke-target: build/bin/nodeshell.exe
+            artifact-path: build/bin/*installer.exe
+          - platform: macos
+            runner: macos-14
+            wails-args: -platform darwin/arm64
+            smoke-cmd: bash scripts/mcp-smoke.sh
+            smoke-target: build/bin/nodeshell
+            artifact-path: |
+              build/bin/*.dmg
+              build/bin/*.zip
+              build/bin/nodeshell.app
+          - platform: linux
+            runner: ubuntu-latest
+            wails-args: -platform linux/amd64
+            smoke-cmd: bash scripts/mcp-smoke.sh
+            smoke-target: build/bin/nodeshell
+            artifact-path: |
+              build/bin/*.AppImage
+              build/bin/*.deb
+              build/bin/*.pkg.tar.zst
+              build/bin/nodeshell
+    # Secrets cannot be referenced inside step-level `if:` conditions (GitHub Actions
+    # rejects "Unrecognized named-value: 'secrets'"). Map them to job env vars here;
+    # unconfigured secrets become empty strings, which the step conditions then test
+    # with `env.X != ''` to skip signing steps.
+    env:
+      APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Resolve app version from package.json
+        shell: bash
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # main.go embeds all:frontend/dist, so the Vite build must exist before
+      # go vet / go test can compile the package tree.
+      - name: Build frontend
+        run: npm run build:wails
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Go tests
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 5m -v ./... 2>&1 | tee go-test.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "=== FAIL markers ==="
+            grep -E '^(--- FAIL|=== RUN.*panic|panic:|FAIL|ok  .*FAIL)' go-test.log | head -40
+            grep -E '^\s+.*_test\.go:[0-9]+:' go-test.log | head -40
+            echo "::error::go test failed (rc=$rc); see go-test.log"
+            exit "$rc"
+          fi
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install NSIS
+        if: matrix.platform == 'windows'
+        run: choco install nsis -y --no-progress
+
+      - name: Install appimagetool and nfpm
+        if: matrix.platform == 'linux'
+        run: |
+          sudo wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
+          sudo chmod +x /usr/local/bin/appimagetool
+          sudo apt-get install -y libfuse2 || true
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Wails build
+        run: wails build -skipbindings ${{ matrix.wails-args }}
+
+      - name: Ad-hoc sign macOS binary for smoke
+        if: matrix.platform == 'macos'
+        run: codesign --force --sign - build/bin/nodeshell
+
+      - name: MCP smoke test
+        run: ${{ matrix.smoke-cmd }} ${{ matrix.smoke-target }}
+
+      - name: Import Apple signing certificate
+        if: matrix.platform == 'macos' && env.APPLE_DEVELOPER_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_CERT_BASE64 != '' && env.APPLE_CERT_PASSWORD != ''
+        shell: bash
+        run: |
+          KEYCHAIN=build-signing.keychain-db
+          echo "$APPLE_CERT_BASE64" | base64 --decode > /tmp/developer_id.p12
+          security create-keychain -p nodeshell "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p nodeshell "$KEYCHAIN"
+          security import /tmp/developer_id.p12 -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" -A -T /usr/bin/codesign -T /usr/bin/notarytool
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k nodeshell "$KEYCHAIN"
+
+      - name: Package macOS DMG and ZIP
+        # Sign only when the full 6-secret set is present (matching the Import and
+        # Notarize steps: with a partial set the Import step skips, the identity is
+        # never in the keychain, and codesign would fail with "no identity found").
+        # Without the full set, fall back to ad-hoc so an unsigned test product is
+        # still produced and uploaded.
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          if [ -n "$APPLE_DEVELOPER_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_CERT_BASE64" ] && [ -n "$APPLE_CERT_PASSWORD" ]; then
+            bash scripts/package-macos.sh build/bin/nodeshell.app build/bin "NodeShell-${{ env.APP_VERSION }}-macos-arm64" "$APPLE_DEVELOPER_ID"
+          else
+            # No signing material configured → ad-hoc signed test product
+            bash scripts/package-macos.sh build/bin/nodeshell.app build/bin "NodeShell-${{ env.APP_VERSION }}-macos-arm64"
+          fi
+
+      - name: Notarize and staple macOS DMG
+        # Same gating set as the Import step: notarize must not run on an ad-hoc
+        # (unsigned) artifact produced when the identity/cert material is missing.
+        if: matrix.platform == 'macos' && env.APPLE_DEVELOPER_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_CERT_BASE64 != '' && env.APPLE_CERT_PASSWORD != ''
+        shell: bash
+        run: |
+          DMG=build/bin/NodeShell-${{ env.APP_VERSION }}-macos-arm64.dmg
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Package Linux AppImage and deb
+        if: matrix.platform == 'linux'
+        run: bash scripts/package-linux.sh build/bin/nodeshell build/bin "NodeShell-${{ env.APP_VERSION }}-linux-amd64" amd64 "${{ env.APP_VERSION }}"
+
+      - name: Sign Windows installer
+        if: matrix.platform == 'windows' && env.WINDOWS_CERT_BASE64 != '' && env.WINDOWS_CERT_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [System.IO.File]::WriteAllBytes($pfx, [System.Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          # Newest signtool under the newest Windows Kits version dir first, then PATH as fallback.
+          # Version dirs (e.g. 10.0.26100.1742) sort as [version], never lexicographically —
+          # FullName order would rank 10.0.26100.9 above 10.0.26100.1742.
+          $kitsVer = (Get-ChildItem -Path $kits -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+(\.\d+)+$' } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1).FullName
+          $signtoolPath = $null
+          if ($kitsVer) {
+            $signtoolPath = (Get-ChildItem -Path $kitsVer -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1).FullName
+            if (-not $signtoolPath) {
+              $signtoolPath = (Get-ChildItem -Path $kitsVer -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+            }
+          }
+          if (-not $signtoolPath) {
+            $signtoolPath = (Get-Command signtool -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $signtoolPath) {
+            throw "signtool.exe not found in Windows Kits or PATH"
+          }
+          & $signtoolPath sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 build/bin/nodeshell-amd64-installer.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NodeShell-${{ env.APP_VERSION }}-${{ matrix.platform }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # download-artifact@v4 only sees artifacts from the same workflow run;
+      # release needs build, so run-id is the current tag-triggered run of ci.yml
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          run-id: ${{ github.run_id }}
+
+      # Signing/notarization lives in the build job's packaging steps: Windows uses
+      # WINDOWS_CERT_BASE64/WINDOWS_CERT_PASSWORD (skipped when unconfigured), macOS
+      # uses APPLE_* secrets (ad-hoc path when unconfigured). No separate signing job
+      # needed until more material must be injected between build and release.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            Snap packaging is not included in this release; it will be restored once the Wails packaging chain is reproducible. Linux AppImage and .deb are provided.
