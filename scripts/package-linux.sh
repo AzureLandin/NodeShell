@@ -2,8 +2,12 @@
 set -euo pipefail
 bin="$1"          # build/bin/nodeshell
 out="$2"          # build/bin
-name="$3"         # NodeShell-2.0.0-linux-amd64
+name="$3"         # NodeShell-<version>-linux-amd64
 arch="${4:-amd64}"
+version="${5:-}"
+if [ -z "$version" ]; then
+  version="$(node -p "require('./package.json').version" 2>/dev/null || echo '0.0.0')"
+fi
 appdir="$out/$name.AppDir"
 desktop="$appdir/usr/share/applications/nodeshell.desktop"
 mkdir -p "$appdir/usr/bin"
@@ -30,7 +34,7 @@ cat > "$out/nfpm.yaml" <<EOF
 name: nodeshell
 arch: $arch
 platform: linux
-version: 2.0.0
+version: $version
 maintainer: AzureLandin
 description: NodeShell SSH client
 homepage: https://github.com/AzureLandin/Simple-SSH-Client
