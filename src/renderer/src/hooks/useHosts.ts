@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { HostConfig, HostInput } from '../../../shared/types'
 
-export function useHosts() {
+export function useHosts(): {
+  hosts: HostConfig[]
+  error: string | null
+  refresh: () => Promise<void>
+  create: (input: HostInput) => Promise<HostConfig>
+  update: (id: string, patch: Partial<HostInput>) => Promise<void>
+  remove: (id: string) => Promise<void>
+} {
   const [hosts, setHosts] = useState<HostConfig[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -24,12 +31,12 @@ export function useHosts() {
     return host
   }
 
-  const update = async (id: string, patch: Partial<HostInput>) => {
+  const update = async (id: string, patch: Partial<HostInput>): Promise<void> => {
     await window.api.hosts.update(id, patch)
     await refresh()
   }
 
-  const remove = async (id: string) => {
+  const remove = async (id: string): Promise<void> => {
     await window.api.hosts.remove(id)
     await refresh()
   }

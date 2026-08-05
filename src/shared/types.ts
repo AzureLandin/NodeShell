@@ -44,6 +44,7 @@ export type SshErrorCode =
   | 'CONFIG_WRITE_FAILED'
   | 'SESSION_NOT_FOUND'
   | 'MCP_SESSION_LIMIT'
+  | 'HOST_NOT_FOUND'
   | 'CANCELLED'
   | 'UNKNOWN'
 
@@ -165,6 +166,13 @@ export interface ElectronApi {
   files: {
     /** Resolve OS path for a File from drag-drop (Electron webUtils). */
     getPathForFile: (file: File) => string
+    /**
+     * Subscribe to native file drops (Wails OnFileDrop). Present only in the
+     * Wails adapter, where DOM File objects carry no real path; the Electron
+     * preload keeps the DOM drop path and omits this. Returns an idempotent
+     * unsubscribe.
+     */
+    onDrop?: (cb: (paths: string[]) => void) => () => void
   }
   monitor: {
     setActive: (sessionId: string | null, title?: string) => Promise<void>
@@ -243,5 +251,6 @@ export const IPC = {
   mcpRegistrationClipboard: 'mcpRegistration:clipboardSnippet',
   dialogOpenPrivateKey: 'dialog:openPrivateKey',
   dialogOpenUploadFiles: 'dialog:openUploadFiles',
-  dialogSaveDownload: 'dialog:saveDownload'
+  dialogSaveDownload: 'dialog:saveDownload',
+  filesOnDrop: 'files:onDrop'
 } as const

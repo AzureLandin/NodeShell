@@ -90,7 +90,7 @@
     "mcpMaxSessions": "最大同时会话数",
     "mcpHint": "控制 Agent 通过 MCP 连接 SSH 时的空闲断开与并发上限。",
     "mcpRegisterTitle": "注册到 Agent",
-    "mcpRegisterHint": "写入各 Agent 的用户全局 MCP 配置（不覆盖其它服务器）。需本机 PATH 上有 Node；安装包已内置 MCP 启动器，无需再编译。",
+    "mcpRegisterHint": "写入各 Agent 的用户全局 MCP 配置（不覆盖其它服务器）。注册本机可执行文件与 --mcp 参数。",
     "mcpRegisterAll": "全部注册",
     "mcpRegister": "注册",
     "mcpUpdate": "更新",

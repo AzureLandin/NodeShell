@@ -61,4 +61,18 @@ describe('ipc-error', () => {
       message: 'Connection cancelled'
     })
   })
+
+  it('round-trips HOST_NOT_FOUND across IPC (Go emits it for DNS failures)', () => {
+    const e = toIpcThrownError({ code: 'HOST_NOT_FOUND', message: 'Host not found: nope.invalid' })
+    expect(parseIpcThrownError(e)).toEqual({
+      code: 'HOST_NOT_FOUND',
+      message: 'Host not found: nope.invalid'
+    })
+  })
+
+  it('parses a Go-formatted NODESHELL_ERR:HOST_NOT_FOUND payload', () => {
+    expect(
+      parseIpcThrownError(new Error('NODESHELL_ERR:HOST_NOT_FOUND:Host not found: x'))
+    ).toEqual({ code: 'HOST_NOT_FOUND', message: 'Host not found: x' })
+  })
 })

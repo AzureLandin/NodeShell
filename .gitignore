@@ -13,3 +13,13 @@ tsconfig.node.tsbuildinfo
 
 # Local design / implementation notes — do not publish
 docs/superpowers/
+
+# Wails build artifacts
+/build/bin/
+/build/windows/
+/wailsjs/
+/package.json.md5
+/nodeshell
+/nodeshell.exe
+/fonts_linux_check.exe
+/.smoke_nodeshell.exe

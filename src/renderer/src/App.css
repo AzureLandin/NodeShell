@@ -417,6 +417,9 @@ button.sftp-panel-toggle:focus-visible {
   overflow: hidden;
   background: var(--bg-elevated);
   box-sizing: border-box;
+  /* Wails file-drop target: native drops over the panel resolve to absolute
+     paths (inherited by every child, so the whole panel body is a target). */
+  --wails-drop-target: drop;
 }
 
 .sftp-panel-body-dragover {

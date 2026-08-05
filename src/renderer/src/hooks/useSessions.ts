@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { parseIpcThrownError } from '../../../shared/ipc-error'
 import type { ConnectOptions, HostConfig } from '../../../shared/types'
 
@@ -45,7 +45,17 @@ function appendRing(prev: string, data: string, max: number): string {
   return next.slice(next.length - max)
 }
 
-export function useSessions() {
+export function useSessions(): {
+  sessions: UiSession[]
+  activeSessionId: string | null
+  setActiveSessionId: Dispatch<SetStateAction<string | null>>
+  toast: string | null
+  setToast: Dispatch<SetStateAction<string | null>>
+  connect: (host: HostConfig, options?: ConnectOptions) => Promise<void>
+  disconnect: (sessionId: string) => Promise<void>
+  reconnect: (session: UiSession, host: HostConfig, options?: ConnectOptions) => Promise<void>
+  registerDataListener: (sessionId: string, cb: (data: string) => void) => () => void
+} {
   const [sessions, setSessions] = useState<UiSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)

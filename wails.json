@@ -1,0 +1,24 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "nodeshell",
+  "outputfilename": "nodeshell",
+  "frontend:dir": ".",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build:wails",
+  "frontend:dev:watcher": "npm run dev:wails",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./wailsjs",
+  "assetdir": "frontend/dist",
+  "reloaddirs": "src/renderer",
+  "author": {
+    "name": "AzureLandin",
+    "email": ""
+  },
+  "info": {
+    "companyName": "NodeShell",
+    "productName": "NodeShell",
+    "productVersion": "2.0.0",
+    "copyright": "MIT",
+    "comments": "NodeShell — desktop SSH client (Wails rebuild)"
+  }
+}

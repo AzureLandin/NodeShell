@@ -11,6 +11,7 @@ const SSH_CODES: ReadonlySet<string> = new Set([
   'CONFIG_WRITE_FAILED',
   'SESSION_NOT_FOUND',
   'MCP_SESSION_LIMIT',
+  'HOST_NOT_FOUND',
   'CANCELLED',
   'UNKNOWN'
 ])

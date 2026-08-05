@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+            wails-args: -platform windows/amd64 -nsis
+            smoke-cmd: powershell -File scripts/mcp-smoke.ps1
+            smoke-target: build/bin/nodeshell.exe
+            artifact: NodeShell-2.0.0-windows
+            artifact-path: build/bin/*installer.exe
+          - platform: macos
+            runner: macos-14
+            wails-args: -platform darwin/arm64
+            smoke-cmd: bash scripts/mcp-smoke.sh
+            smoke-target: build/bin/nodeshell
+            artifact: NodeShell-2.0.0-macos
+            artifact-path: |
+              build/bin/*.dmg
+              build/bin/*.zip
+              build/bin/nodeshell.app
+          - platform: linux
+            runner: ubuntu-latest
+            wails-args: -platform linux/amd64
+            smoke-cmd: bash scripts/mcp-smoke.sh
+            smoke-target: build/bin/nodeshell
+            artifact: NodeShell-2.0.0-linux
+            artifact-path: |
+              build/bin/*.AppImage
+              build/bin/*.deb
+              build/bin/*.pkg.tar.zst
+              build/bin/nodeshell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Go tests
+        run: go test -race -count=1 ./...
+
+      - name: Build frontend
+        run: npm run build:wails
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install NSIS
+        if: matrix.platform == 'windows'
+        run: choco install nsis -y --no-progress
+
+      - name: Install appimagetool and nfpm
+        if: matrix.platform == 'linux'
+        run: |
+          sudo wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
+          sudo chmod +x /usr/local/bin/appimagetool
+          sudo apt-get install -y libfuse2 || true
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Wails build
+        run: wails build -skipbindings ${{ matrix.wails-args }}
+
+      - name: Ad-hoc sign macOS binary for smoke
+        if: matrix.platform == 'macos'
+        run: codesign --force --sign - build/bin/nodeshell
+
+      - name: MCP smoke test
+        run: ${{ matrix.smoke-cmd }} ${{ matrix.smoke-target }}
+
+      # APPLE_SIGN injection point — notarization/staple would go here when configured
+      - name: Package macOS DMG and ZIP
+        if: matrix.platform == 'macos'
+        run: bash scripts/package-macos.sh build/bin/nodeshell.app build/bin NodeShell-2.0.0-macos-arm64
+
+      - name: Package Linux AppImage and deb
+        if: matrix.platform == 'linux'
+        run: bash scripts/package-linux.sh build/bin/nodeshell build/bin NodeShell-2.0.0-linux-amd64 amd64
+
+      # WINDOWS_SIGN injection point — skipped when unconfigured
+      - name: Sign Windows installer
+        if: matrix.platform == 'windows' && secrets.WINDOWS_SIGN != ''
+        env:
+          WINDOWS_SIGN: ${{ secrets.WINDOWS_SIGN }}
+        run: signtool sign /f cert.pfx /p "$env:WINDOWS_SIGN" build/bin/nodeshell-amd64-installer.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # download-artifact@v4 only sees artifacts from the same workflow run;
+      # release needs build, so run-id is the current tag-triggered run of ci.yml
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          run-id: ${{ github.run_id }}
+
+      # WINDOWS_SIGN/APPLE_SIGN injection points live in the build job's packaging
+      # steps above; a signing/notarization job can be inserted between build and
+      # release once signing material is configured
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            Snap packaging is not included in this release; it will be restored once the Wails packaging chain is reproducible. Linux AppImage and .deb are provided.
