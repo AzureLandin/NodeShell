@@ -45,6 +45,19 @@ jobs:
               build/bin/*.deb
               build/bin/*.pkg.tar.zst
               build/bin/nodeshell
+    # Secrets cannot be referenced inside step-level `if:` conditions (GitHub Actions
+    # rejects "Unrecognized named-value: 'secrets'"). Map them to job env vars here;
+    # unconfigured secrets become empty strings, which the step conditions then test
+    # with `env.X != ''` to skip signing steps.
+    env:
+      APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,11 +132,8 @@ jobs:
         run: ${{ matrix.smoke-cmd }} ${{ matrix.smoke-target }}
 
       - name: Import Apple signing certificate
-        if: matrix.platform == 'macos' && secrets.APPLE_DEVELOPER_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_CERT_BASE64 != '' && secrets.APPLE_CERT_PASSWORD != ''
+        if: matrix.platform == 'macos' && env.APPLE_DEVELOPER_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_CERT_BASE64 != '' && env.APPLE_CERT_PASSWORD != ''
         shell: bash
-        env:
-          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
           KEYCHAIN=build-signing.keychain-db
           echo "$APPLE_CERT_BASE64" | base64 --decode > /tmp/developer_id.p12
@@ -159,12 +169,8 @@ jobs:
       - name: Notarize and staple macOS DMG
         # Same gating set as the Import step: notarize must not run on an ad-hoc
         # (unsigned) artifact produced when the identity/cert material is missing.
-        if: matrix.platform == 'macos' && secrets.APPLE_DEVELOPER_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_CERT_BASE64 != '' && secrets.APPLE_CERT_PASSWORD != ''
+        if: matrix.platform == 'macos' && env.APPLE_DEVELOPER_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_CERT_BASE64 != '' && env.APPLE_CERT_PASSWORD != ''
         shell: bash
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           DMG=build/bin/NodeShell-${{ env.APP_VERSION }}-macos-arm64.dmg
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
@@ -175,11 +181,8 @@ jobs:
         run: bash scripts/package-linux.sh build/bin/nodeshell build/bin "NodeShell-${{ env.APP_VERSION }}-linux-amd64" amd64 "${{ env.APP_VERSION }}"
 
       - name: Sign Windows installer
-        if: matrix.platform == 'windows' && secrets.WINDOWS_CERT_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != ''
+        if: matrix.platform == 'windows' && env.WINDOWS_CERT_BASE64 != '' && env.WINDOWS_CERT_PASSWORD != ''
         shell: pwsh
-        env:
-          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
           [System.IO.File]::WriteAllBytes($pfx, [System.Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))

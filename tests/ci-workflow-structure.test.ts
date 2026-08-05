@@ -97,6 +97,17 @@ describe('CI packaging', () => {
     expect(ci).toMatch(/nfpm|\.deb/)
   })
 
+  it('never references secrets inside step-level if conditions', () => {
+    // GitHub Actions rejects "Unrecognized named-value: 'secrets'" in step `if:`
+    // expressions (the workflow fails to parse entirely). Secrets may only appear
+    // in job-level env mappings; steps must gate on the mapped env vars instead.
+    for (const line of ci.split('\n')) {
+      if (line.includes('if:') && line.includes('secrets.')) {
+        throw new Error(`illegal secrets reference in step if: ${line.trim()}`)
+      }
+    }
+  })
+
   it('Windows signing uses optional base64 cert + password secrets and skips when unconfigured', () => {
     expect(ci).toContain('secrets.WINDOWS_CERT_BASE64')
     expect(ci).toContain('secrets.WINDOWS_CERT_PASSWORD')
@@ -104,8 +115,8 @@ describe('CI packaging', () => {
     expect(ci).toContain('[System.Convert]::FromBase64String')
     expect(ci).toMatch(/signtool\.exe/)
     expect(ci).toMatch(/timestamp\.digicert\.com/)
-    expect(ci).toMatch(/WINDOWS_CERT_BASE64 != ''/)
-    expect(ci).toMatch(/WINDOWS_CERT_PASSWORD != ''/)
+    expect(ci).toMatch(/env\.WINDOWS_CERT_BASE64 != ''/)
+    expect(ci).toMatch(/env\.WINDOWS_CERT_PASSWORD != ''/)
   })
 
   it('macOS signing imports the cert into a keychain and notarizes when configured', () => {
@@ -157,7 +168,7 @@ describe('CI packaging', () => {
     // is now an explicit secret, required (6th) in the import condition and passed via env.
     const importStep = stepSection(ci, 'Import Apple signing certificate')
     expect(importStep).toMatch(/if:.*APPLE_CERT_PASSWORD != ''/)
-    expect(importStep).toContain('APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}')
+    expect(ci).toContain('APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}')
     expect(importStep).toContain('-P "$APPLE_CERT_PASSWORD"')
     expect(importStep).not.toContain('-P ""')
   })
