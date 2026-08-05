@@ -40,6 +40,11 @@
     "reconnect": "Reconnect",
     "placeholder": "Click Hosts in the top-left to connect"
   },
+  "terminal": {
+    "copy": "Copy",
+    "paste": "Paste",
+    "clearScreen": "Clear Screen"
+  },
   "auth": {
     "passwordTitle": "Password for {{name}}",
     "passwordLabel": "Password",

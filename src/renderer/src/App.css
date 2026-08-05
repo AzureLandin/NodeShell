@@ -2075,3 +2075,45 @@ button:disabled {
   color: var(--text-bright);
   background: transparent;
 }
+
+.terminal-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.terminal-context-menu-item:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.terminal-context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.terminal-context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-subtle);
+}

@@ -40,6 +40,11 @@
     "reconnect": "重新连接",
     "placeholder": "点击左上角「主机」选择并连接"
   },
+  "terminal": {
+    "copy": "复制",
+    "paste": "粘贴",
+    "clearScreen": "清屏"
+  },
   "auth": {
     "passwordTitle": "输入 {{name}} 的密码",
     "passwordLabel": "密码",
