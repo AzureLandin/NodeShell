@@ -90,6 +90,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
       # main.go embeds all:frontend/dist, so the Vite build must exist before
       # go vet / go test can compile the package tree.
       - name: Build frontend
@@ -99,7 +105,11 @@ jobs:
         run: go vet ./...
 
       - name: Go tests
-        run: go test -race -count=1 ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 5m -v ./... 2>&1 | tail -120
+          exit ${PIPESTATUS[0]}
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
