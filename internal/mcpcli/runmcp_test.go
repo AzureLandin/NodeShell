@@ -1,7 +1,6 @@
 package mcpcli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -52,7 +51,7 @@ func TestRunMCPHandshake(t *testing.T) {
 	// Keep stdin open until all responses arrive. strings.NewReader hits EOF as
 	// soon as the last byte is read, which races Serve's EOF→cancel-in-flight
 	// path and can drop the final tools/call response.
-	var out, errOut bytes.Buffer
+	var out, errOut syncBuffer
 	inR, inW := io.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- RunMCP(context.Background(), inR, &out, &errOut) }()

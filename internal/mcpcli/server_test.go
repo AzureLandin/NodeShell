@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -31,13 +32,38 @@ func decodeLines(t *testing.T, out string) []map[string]any {
 	return msgs
 }
 
+// syncBuffer is a bytes.Buffer safe for concurrent Write (Serve) and String
+// (test polling). CI runs go test -race.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
 // runServer feeds input (newline-delimited JSON) to a Server and returns the
 // raw stdout and stderr. Stdin stays open until every id-bearing request has a
 // response: closing earlier races the EOF→cancel-in-flight path and can drop
 // the last tools/call (see TestRunMCPHandshake flake under go test ./...).
 func runServer(t *testing.T, rt *Runtime, input string) (out, errOut string) {
 	t.Helper()
-	var outBuf, errBuf bytes.Buffer
+	var outBuf, errBuf syncBuffer
 	inR, inW := io.Pipe()
 	s := NewServer(rt, &outBuf, &errBuf)
 	done := make(chan error, 1)
