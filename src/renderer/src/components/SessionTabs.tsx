@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faServer } from '@fortawesome/free-solid-svg-icons'
 import type { ResolvedTheme } from '../../../shared/types'
 import type { UiSession } from '../hooks/useSessions'
 import { SftpPanel } from './SftpPanel'
@@ -10,6 +13,7 @@ interface SessionTabsProps {
   onSelect: (id: string) => void
   onClose: (id: string) => void
   onReconnect: (session: UiSession) => void
+  onCancelConnect?: () => void
   registerDataListener: (sessionId: string, cb: (data: string) => void) => () => void
   sftpExpanded: boolean
   onToggleSftp: () => void
@@ -30,6 +34,7 @@ export function SessionTabs({
   onSelect,
   onClose,
   onReconnect,
+  onCancelConnect,
   registerDataListener,
   sftpExpanded,
   onToggleSftp,
@@ -42,6 +47,17 @@ export function SessionTabs({
   const { t } = useTranslation()
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
   const sftpConnected = activeSession?.status === 'connected'
+  const connecting = activeSession?.status === 'connecting'
+  const [showSlowHint, setShowSlowHint] = useState(false)
+
+  useEffect(() => {
+    if (!connecting) {
+      setShowSlowHint(false)
+      return
+    }
+    const id = window.setTimeout(() => setShowSlowHint(true), 3000)
+    return () => window.clearTimeout(id)
+  }, [connecting, activeSession?.sessionId])
 
   return (
     <div className="session-tabs">
@@ -52,7 +68,7 @@ export function SessionTabs({
           onClick={onOpenHosts}
           title={t('hostsPicker.open')}
         >
-          <span className="hosts-launcher-icon" aria-hidden />
+          <FontAwesomeIcon icon={faServer} className="hosts-launcher-icon" aria-hidden />
           <span>{t('hostsPicker.open')}</span>
         </button>
 
@@ -91,6 +107,24 @@ export function SessionTabs({
       <div className="session-terminal-area">
         {sessions.length === 0 ? (
           <p className="main-placeholder">{t('session.placeholder')}</p>
+        ) : connecting && activeSession ? (
+          <div className="session-connecting" role="status" aria-live="polite">
+            <p className="session-connecting-status">
+              {t('auth.connectingStatus', {
+                name: activeSession.title,
+                host: activeSession.remoteHost ?? '—',
+                port: activeSession.remotePort ?? '—'
+              })}
+            </p>
+            {showSlowHint && (
+              <p className="session-connecting-hint">{t('auth.connectingHint')}</p>
+            )}
+            {onCancelConnect && (
+              <button type="button" className="btn-secondary btn-sm" onClick={onCancelConnect}>
+                {t('auth.cancelConnect')}
+              </button>
+            )}
+          </div>
         ) : (
           <>
             {activeSession &&
@@ -112,7 +146,7 @@ export function SessionTabs({
               )}
 
             <div className="session-terminals">
-              {activeSession && (
+              {activeSession && activeSession.status !== 'connecting' && (
                 <TerminalView
                   key={activeSession.sessionId}
                   sessionId={activeSession.sessionId}
@@ -130,7 +164,7 @@ export function SessionTabs({
       </div>
 
       <SftpPanel
-        sessionId={activeSessionId}
+        sessionId={sftpConnected ? activeSessionId : null}
         connected={Boolean(sftpConnected)}
         expanded={sftpExpanded}
         onToggle={onToggleSftp}

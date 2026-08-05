@@ -31,16 +31,81 @@ func decodeLines(t *testing.T, out string) []map[string]any {
 	return msgs
 }
 
-// runServer feeds input (newline-delimited JSON) to a Server until EOF and
-// returns the raw stdout and stderr. Responses arrive in request order.
+// runServer feeds input (newline-delimited JSON) to a Server and returns the
+// raw stdout and stderr. Stdin stays open until every id-bearing request has a
+// response: closing earlier races the EOF→cancel-in-flight path and can drop
+// the last tools/call (see TestRunMCPHandshake flake under go test ./...).
 func runServer(t *testing.T, rt *Runtime, input string) (out, errOut string) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
+	inR, inW := io.Pipe()
 	s := NewServer(rt, &outBuf, &errBuf)
-	if err := s.Serve(context.Background(), strings.NewReader(input)); err != nil {
-		t.Fatalf("Serve: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), inR) }()
+
+	if _, err := io.WriteString(inW, input); err != nil {
+		_ = inW.Close()
+		t.Fatalf("write input: %v", err)
+	}
+
+	want := countRPCRequests(input)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if countStdoutJSONLines(outBuf.String()) >= want {
+			break
+		}
+		if errBuf.Len() > 0 && want == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = inW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after EOF")
 	}
 	return outBuf.String(), errBuf.String()
+}
+
+// countRPCRequests counts JSON-RPC lines that expect a response (have a
+// non-null id). Notifications and unparseable lines are ignored.
+func countRPCRequests(input string) int {
+	n := 0
+	for _, line := range strings.Split(input, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var msg struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+		if len(msg.ID) > 0 && string(msg.ID) != "null" {
+			n++
+		}
+	}
+	return n
+}
+
+func countStdoutJSONLines(out string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // mcpSession drives a Server interactively over io.Pipe, so requests can be
@@ -542,6 +607,97 @@ func TestServeStdoutClean(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, "\n") {
 		t.Fatal("stdout must end with a newline")
+	}
+}
+
+// TestServeEOFCancelsInFlightRunCommand: closing stdin (client disconnect /
+// MCP process teardown) while run_command is blocked must cancel the call
+// promptly — not wait for the command timeout — so a remote CPU hog is
+// released when the agent chat/transport ends.
+func TestServeEOFCancelsInFlightRunCommand(t *testing.T) {
+	m := newFakeManager()
+	m.execStart = make(chan struct{}, 1)
+	m.execBlock = make(chan struct{}) // never closed; only ctx cancel releases
+	rt := newTestRuntime(2, time.Minute, m, &fakeSFTP{}, nil)
+	session := newMCPSession(t, rt)
+
+	conn := session.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"connect_host","arguments":{"hostId":"h1"}}}`)
+	var connectRes struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal([]byte(toolText(t, resultOf(t, conn))), &connectRes); err != nil || connectRes.SessionID == "" {
+		t.Fatalf("connect: %v %q", err, toolText(t, resultOf(t, conn)))
+	}
+
+	req := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"sessionId":"` + connectRes.SessionID + `","command":"sleep 999","timeoutMs":300000}}}` + "\n"
+	if _, err := io.WriteString(session.inW, req); err != nil {
+		t.Fatalf("write run_command: %v", err)
+	}
+	select {
+	case <-m.execStart:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run_command never reached Exec")
+	}
+
+	start := time.Now()
+	if err := session.inW.Close(); err != nil {
+		t.Fatalf("close stdin: %v", err)
+	}
+	select {
+	case err := <-session.done:
+		if err != nil {
+			t.Fatalf("Serve after EOF during run_command: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return promptly after EOF during run_command")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("EOF shutdown took %v; in-flight run_command was not cancelled", elapsed)
+	}
+}
+
+// TestServeCancelledNotificationAbortsRunCommand: a notifications/cancelled
+// for an in-flight tools/call must abort the remote exec without waiting for
+// the timeout, and must not write a JSON-RPC response for that id.
+func TestServeCancelledNotificationAbortsRunCommand(t *testing.T) {
+	m := newFakeManager()
+	m.execStart = make(chan struct{}, 1)
+	m.execBlock = make(chan struct{})
+	rt := newTestRuntime(2, time.Minute, m, &fakeSFTP{}, nil)
+	session := newMCPSession(t, rt)
+
+	conn := session.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"connect_host","arguments":{"hostId":"h1"}}}`)
+	var connectRes struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal([]byte(toolText(t, resultOf(t, conn))), &connectRes); err != nil || connectRes.SessionID == "" {
+		t.Fatalf("connect: %v", err)
+	}
+
+	req := `{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"run_command","arguments":{"sessionId":"` + connectRes.SessionID + `","command":"sleep 999","timeoutMs":300000}}}` + "\n"
+	if _, err := io.WriteString(session.inW, req); err != nil {
+		t.Fatalf("write run_command: %v", err)
+	}
+	select {
+	case <-m.execStart:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run_command never reached Exec")
+	}
+
+	session.sendNotification(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":42,"reason":"user stopped"}}`)
+
+	// A follow-up ping must still work — proves the cancelled call freed the
+	// server loop and did not leave a stuck response on id 42.
+	pong := session.send(`{"jsonrpc":"2.0","id":99,"method":"ping"}`)
+	if _, ok := pong["result"].(map[string]any); !ok {
+		t.Fatalf("ping after cancel = %#v, want a result", pong)
+	}
+	if id, _ := pong["id"].(float64); id != 99 {
+		t.Fatalf("ping id = %v, want 99 (cancelled call must not steal the response slot)", pong["id"])
+	}
+
+	if err := session.close(); err != nil {
+		t.Fatalf("Serve after cancel: %v", err)
 	}
 }
 

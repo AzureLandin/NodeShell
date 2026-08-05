@@ -142,6 +142,17 @@ export function createApi(bridge: ApiBridge): ElectronApi {
         bridge.call<void>('SftpUploadPaths', sessionId, localPaths),
       download: (sessionId: string, remotePath: string, defaultName: string): Promise<void> =>
         bridge.call<void>('SftpDownload', sessionId, remotePath, defaultName),
+      readText: (
+        sessionId: string,
+        remotePath: string
+      ): Promise<{ path: string; content: string }> =>
+        bridge.call<{ path: string; content: string }>('SftpReadText', sessionId, remotePath),
+      writeText: (
+        sessionId: string,
+        remotePath: string,
+        content: string
+      ): Promise<{ path: string }> =>
+        bridge.call<{ path: string }>('SftpWriteText', sessionId, remotePath, content),
       onTransferProgress: (cb: (event: SftpTransferProgressEvent) => void): (() => void) =>
         events.on<SftpTransferProgressEvent>(IPC.sftpTransferProgress, cb)
     },

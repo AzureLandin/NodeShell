@@ -98,6 +98,8 @@ describe('api adapter shape', () => {
     expect(typeof api.sftp.upload).toBe('function')
     expect(typeof api.sftp.uploadPaths).toBe('function')
     expect(typeof api.sftp.download).toBe('function')
+    expect(typeof api.sftp.readText).toBe('function')
+    expect(typeof api.sftp.writeText).toBe('function')
     expect(typeof api.sftp.onTransferProgress).toBe('function')
 
     expect(typeof api.files.getPathForFile).toBe('function')
@@ -212,6 +214,12 @@ describe('api adapter binding dispatch', () => {
     expect(bridge.calls.at(-1)).toEqual({ method: 'SftpUploadPaths', args: ['s1', ['/a', '/b']] })
     await api.sftp.download('s1', '/a', 'a')
     expect(bridge.calls.at(-1)).toEqual({ method: 'SftpDownload', args: ['s1', '/a', 'a'] })
+    bridge.setResult({ path: '/a', content: 'hi' })
+    await expect(api.sftp.readText('s1', '/a')).resolves.toEqual({ path: '/a', content: 'hi' })
+    expect(bridge.calls.at(-1)).toEqual({ method: 'SftpReadText', args: ['s1', '/a'] })
+    bridge.setResult({ path: '/a' })
+    await expect(api.sftp.writeText('s1', '/a', 'hi')).resolves.toEqual({ path: '/a' })
+    expect(bridge.calls.at(-1)).toEqual({ method: 'SftpWriteText', args: ['s1', '/a', 'hi'] })
 
     bridge.setResult(undefined)
     await api.monitor.setActive('s1', 't')

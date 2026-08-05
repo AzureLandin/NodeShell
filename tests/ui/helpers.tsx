@@ -85,6 +85,8 @@ export function createFakeApi(): FakeApi {
       upload: vi.fn(),
       uploadPaths: vi.fn(),
       download: vi.fn(),
+      readText: vi.fn(),
+      writeText: vi.fn(),
       onTransferProgress: vi.fn(() => vi.fn())
     },
     files: {

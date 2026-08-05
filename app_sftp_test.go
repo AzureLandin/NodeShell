@@ -67,6 +67,12 @@ func TestAppSFTPBindingsUninitialised(t *testing.T) {
 	if err := a.SftpRemove("s", "x"); err == nil {
 		t.Fatal("SftpRemove on uninitialised App must error")
 	}
+	if _, err := a.SftpReadText("s", "x"); err == nil {
+		t.Fatal("SftpReadText on uninitialised App must error")
+	}
+	if _, err := a.SftpWriteText("s", "x", "y"); err == nil {
+		t.Fatal("SftpWriteText on uninitialised App must error")
+	}
 	if _, err := a.DialogOpenPrivateKeyFile(); err == nil {
 		t.Fatal("DialogOpenPrivateKeyFile on uninitialised App must error")
 	}
@@ -300,4 +306,35 @@ func waitForCondition(t *testing.T, cond func() bool) {
 		time.Sleep(30 * time.Millisecond)
 	}
 	t.Fatal("condition never became true")
+}
+
+// TestAppSftpReadWriteTextRoundtrip drives the GUI text bindings over a real
+// SFTP session and checks the 512KiB cap is enforced at the App level.
+func TestAppSftpReadWriteTextRoundtrip(t *testing.T) {
+	root := t.TempDir()
+	a, sid, _ := newSFTPApp(t, root, false)
+
+	written, err := a.SftpWriteText(sid, "notes.txt", "hello GUI")
+	if err != nil {
+		t.Fatalf("SftpWriteText: %v", err)
+	}
+	if !strings.HasSuffix(written.Path, "/notes.txt") {
+		t.Fatalf("WriteText path = %q, want suffix /notes.txt", written.Path)
+	}
+
+	got, err := a.SftpReadText(sid, "notes.txt")
+	if err != nil {
+		t.Fatalf("SftpReadText: %v", err)
+	}
+	if got.Content != "hello GUI" {
+		t.Fatalf("ReadText content = %q, want %q", got.Content, "hello GUI")
+	}
+	if got.Path != written.Path {
+		t.Fatalf("ReadText path %q != WriteText path %q", got.Path, written.Path)
+	}
+
+	over := strings.Repeat("x", int(sftpGUITextMaxBytes)+1)
+	if _, err := a.SftpWriteText(sid, "big.txt", over); err == nil {
+		t.Fatal("SftpWriteText over 512KiB must be rejected")
+	}
 }

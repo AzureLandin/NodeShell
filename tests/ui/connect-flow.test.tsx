@@ -131,7 +131,7 @@ describe('App connect flow', () => {
     expect(tab).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('cancel during an in-flight password connect aborts the connect and reports the localized cancellation', async () => {
+  it('cancel during an in-flight password connect aborts from the terminal connecting pane', async () => {
     const fake = await renderApp([makeHost({ credentialsSaved: false })])
     let rejectConnect: ((e: Error) => void) | null = null
     fake.mocks.sessions.connect.mockImplementation(
@@ -157,20 +157,17 @@ describe('App connect flow', () => {
     await user.type(screen.getByLabelText('Password'), 'pw1')
     await user.click(within(passwordModal()).getByRole('button', { name: 'Connect' }))
 
-    // Busy: the secondary action switches from dismiss to cancel-connect.
-    expect(await within(passwordModal()).findByRole('status')).toHaveTextContent(/Connecting/)
-    await user.click(within(passwordModal()).getByRole('button', { name: 'Cancel' }))
+    // Host picker and password modal close; connecting status lives on the tab.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByRole('status')).toHaveTextContent(/Connecting to My server/)
+    expect(fake.mocks.sessions.connect).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
     expect(fake.mocks.sessions.cancelConnect).toHaveBeenCalledTimes(1)
-    expect(fake.mocks.sessions.connect).toHaveBeenCalledTimes(1)
 
     // The cancelled connect yields no session, so no tab may ever appear.
     await waitFor(() => expect(screen.queryByRole('tab')).not.toBeInTheDocument())
-
-    // The modal stays open and surfaces the localized cancellation.
-    expect(await within(passwordModal()).findByRole('alert')).toHaveTextContent(
-      'Connection cancelled'
-    )
   })
 
   it('HOST_KEY_UNKNOWN shows the fingerprint; confirm retries with acceptHostKey, password preserved', async () => {

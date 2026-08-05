@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nodeshell/internal/credentials"
 )
@@ -47,9 +49,32 @@ func TestRunMCPHandshake(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_hosts","arguments":{}}}`,
 	}, "\n") + "\n"
 
+	// Keep stdin open until all responses arrive. strings.NewReader hits EOF as
+	// soon as the last byte is read, which races Serve's EOF→cancel-in-flight
+	// path and can drop the final tools/call response.
 	var out, errOut bytes.Buffer
-	if err := RunMCP(context.Background(), strings.NewReader(input), &out, &errOut); err != nil {
-		t.Fatalf("RunMCP: %v", err)
+	inR, inW := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- RunMCP(context.Background(), inR, &out, &errOut) }()
+	if _, err := io.WriteString(inW, input); err != nil {
+		_ = inW.Close()
+		t.Fatalf("write input: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if countStdoutJSONLines(out.String()) >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = inW.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunMCP: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunMCP did not return after EOF")
 	}
 	if errOut.String() != "" {
 		t.Fatalf("stderr = %q, want clean", errOut.String())

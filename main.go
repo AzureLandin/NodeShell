@@ -80,6 +80,9 @@ func runGUI() int {
 		Title:  "NodeShell",
 		Width:  1200,
 		Height: 800,
+		// Match theme.css --bg-app dark default so the native window is not
+		// white for a frame before the WebView paints (startup flash).
+		BackgroundColour: options.NewRGB(0x12, 0x12, 0x12),
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

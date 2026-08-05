@@ -11,6 +11,13 @@ export interface UiSession {
   status: UiSessionStatus
   errorMessage?: string
   authMethod: 'password' | 'privateKey'
+  /** SSH endpoint for connecting / status UI (host name as configured). */
+  remoteHost?: string
+  remotePort?: number
+}
+
+export function isPendingSessionId(sessionId: string): boolean {
+  return sessionId.startsWith('pending-')
 }
 
 export class ConnectError extends Error {
@@ -45,6 +52,19 @@ function appendRing(prev: string, data: string, max: number): string {
   return next.slice(next.length - max)
 }
 
+function removeSessionById(
+  prev: UiSession[],
+  sessionId: string,
+  setActiveSessionId: Dispatch<SetStateAction<string | null>>
+): UiSession[] {
+  const next = prev.filter((s) => s.sessionId !== sessionId)
+  setActiveSessionId((active) => {
+    if (active !== sessionId) return active
+    return next.length > 0 ? next[next.length - 1]!.sessionId : null
+  })
+  return next
+}
+
 export function useSessions(): {
   sessions: UiSession[]
   activeSessionId: string | null
@@ -53,6 +73,7 @@ export function useSessions(): {
   setToast: Dispatch<SetStateAction<string | null>>
   connect: (host: HostConfig, options?: ConnectOptions) => Promise<void>
   disconnect: (sessionId: string) => Promise<void>
+  abortConnectingUi: (hostId: string) => void
   reconnect: (session: UiSession, host: HostConfig, options?: ConnectOptions) => Promise<void>
   registerDataListener: (sessionId: string, cb: (data: string) => void) => () => void
 } {
@@ -61,6 +82,8 @@ export function useSessions(): {
   const [toast, setToast] = useState<string | null>(null)
   const dataListenersRef = useRef(new Map<string, (data: string) => void>())
   const outputRingsRef = useRef(new Map<string, string>())
+  const sessionsRef = useRef<UiSession[]>([])
+  sessionsRef.current = sessions
 
   useEffect(() => {
     const offData = window.api.sessions.onData(({ sessionId, data }) => {
@@ -110,39 +133,110 @@ export function useSessions(): {
   )
 
   const connect = useCallback(async (host: HostConfig, options?: ConnectOptions): Promise<void> => {
-    const { sessionId } = await invokeConnect(host.id, options)
-    const session: UiSession = {
-      sessionId,
-      hostId: host.id,
-      title: host.name,
-      status: 'connected',
-      authMethod: host.authMethod
+    // Resolve the pending id from the latest sessions snapshot — never from a
+    // setState updater side effect (batched updates can run the updater later).
+    const existing = sessionsRef.current.find(
+      (s) => s.status === 'connecting' && s.hostId === host.id
+    )
+    const pendingId = existing?.sessionId ?? `pending-${crypto.randomUUID()}`
+    if (!existing) {
+      setSessions((prev) => {
+        if (prev.some((s) => s.sessionId === pendingId || (s.status === 'connecting' && s.hostId === host.id))) {
+          return prev
+        }
+        return [
+          ...prev,
+          {
+            sessionId: pendingId,
+            hostId: host.id,
+            title: host.name,
+            status: 'connecting' as const,
+            authMethod: host.authMethod,
+            remoteHost: host.host,
+            remotePort: host.port
+          }
+        ]
+      })
     }
-    setSessions((prev) => [...prev, session])
-    setActiveSessionId(sessionId)
+    setActiveSessionId(pendingId)
+
+    try {
+      const { sessionId } = await invokeConnect(host.id, options)
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === pendingId
+            ? {
+                sessionId,
+                hostId: host.id,
+                title: host.name,
+                status: 'connected' as const,
+                authMethod: host.authMethod,
+                remoteHost: host.host,
+                remotePort: host.port
+              }
+            : s
+        )
+      )
+      setActiveSessionId(sessionId)
+    } catch (e) {
+      // Keep the pending tab during host-key confirm so the user stays on the
+      // terminal view; App.abortConnectingUi cleans up if they decline.
+      if (
+        e instanceof ConnectError &&
+        (e.code === 'HOST_KEY_CHANGED' || e.code === 'HOST_KEY_UNKNOWN')
+      ) {
+        throw e
+      }
+      setSessions((prev) => removeSessionById(prev, pendingId, setActiveSessionId))
+      throw e
+    }
+  }, [])
+
+  /** Remove a pending connect tab, or restore a reconnecting tab to disconnected. */
+  const abortConnectingUi = useCallback((hostId: string): void => {
+    setSessions((prev) => {
+      const pending = prev.find(
+        (s) =>
+          s.status === 'connecting' && s.hostId === hostId && isPendingSessionId(s.sessionId)
+      )
+      if (pending) {
+        return removeSessionById(prev, pending.sessionId, setActiveSessionId)
+      }
+      return prev.map((s) =>
+        s.status === 'connecting' && s.hostId === hostId
+          ? { ...s, status: 'disconnected' as const, errorMessage: undefined }
+          : s
+      )
+    })
   }, [])
 
   const disconnect = useCallback(async (sessionId: string): Promise<void> => {
-    try {
-      await window.api.sessions.disconnect(sessionId)
-    } catch {
-      /* session may already be gone */
+    if (isPendingSessionId(sessionId)) {
+      try {
+        await window.api.sessions.cancelConnect()
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        await window.api.sessions.disconnect(sessionId)
+      } catch {
+        /* session may already be gone */
+      }
     }
     outputRingsRef.current.delete(sessionId)
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.sessionId !== sessionId)
-      setActiveSessionId((active) => {
-        if (active !== sessionId) return active
-        return next.length > 0 ? next[next.length - 1]!.sessionId : null
-      })
-      return next
-    })
+    setSessions((prev) => removeSessionById(prev, sessionId, setActiveSessionId))
     dataListenersRef.current.delete(sessionId)
   }, [])
 
   const reconnect = useCallback(
     async (session: UiSession, host: HostConfig, options?: ConnectOptions): Promise<void> => {
       // Connect first, then swap — keeps the old session alive if the new connect fails.
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === session.sessionId ? { ...s, status: 'connecting' as const } : s
+        )
+      )
       try {
         const { sessionId } = await invokeConnect(host.id, options)
         const oldId = session.sessionId
@@ -155,7 +249,9 @@ export function useSessions(): {
                   hostId: host.id,
                   title: host.name,
                   status: 'connected' as const,
-                  authMethod: host.authMethod
+                  authMethod: host.authMethod,
+                  remoteHost: host.host,
+                  remotePort: host.port
                 }
               : s
           )
@@ -172,7 +268,20 @@ export function useSessions(): {
           e instanceof ConnectError
             ? { code: e.code, message: e.message }
             : parseIpcThrownError(e)
-        if (code) throw new ConnectError(code, message)
+        if (code === 'HOST_KEY_CHANGED' || code === 'HOST_KEY_UNKNOWN') {
+          // Leave status as connecting for the confirm dialog; App restores on decline.
+          if (code) throw new ConnectError(code, message)
+        }
+        if (code) {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.sessionId === session.sessionId
+                ? { ...s, status: 'disconnected' as const, errorMessage: undefined }
+                : s
+            )
+          )
+          throw new ConnectError(code, message)
+        }
         setToast(message)
         setSessions((prev) =>
           prev.map((s) =>
@@ -194,6 +303,7 @@ export function useSessions(): {
     setToast,
     connect,
     disconnect,
+    abortConnectingUi,
     reconnect,
     registerDataListener
   }

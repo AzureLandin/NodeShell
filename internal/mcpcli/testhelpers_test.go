@@ -207,7 +207,11 @@ func (m *fakeManager) Exec(sessionID string, ctx context.Context, command string
 		}
 	}
 	if m.execBlock != nil {
-		<-m.execBlock
+		select {
+		case <-m.execBlock:
+		case <-ctx.Done():
+			return "", &sessions.Error{Code: apperror.Cancelled, Message: "Operation cancelled"}
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

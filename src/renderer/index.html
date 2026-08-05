@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html data-theme="dark" style="color-scheme: dark; background: #121212">
   <head>
     <meta charset="UTF-8" />
     <title>NodeShell</title>
@@ -8,6 +8,26 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
+    <!--
+      Paint the shell before JS/CSS modules load. Without data-theme, --bg-app
+      is undefined and the WebView flashes white; this keeps the first frame
+      aligned with the dark default (theme-boot.js may switch to light).
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #121212;
+        color-scheme: dark;
+      }
+      html[data-theme='light'],
+      html[data-theme='light'] body {
+        background: #eef1f5;
+        color-scheme: light;
+      }
+    </style>
+    <script src="/theme-boot.js"></script>
   </head>
 
   <body>

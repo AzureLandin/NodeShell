@@ -2,11 +2,13 @@ package mcpcli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // Protocol constants. Only the 2024-11-05 revision is spoken; a client
@@ -56,12 +58,20 @@ type rpcError struct {
 // in/out. Each request is one JSON object per line; every response is exactly
 // one JSON line on out. Nothing but protocol responses is ever written to
 // out; diagnostics belong to errOut.
+//
+// The stdin reader runs concurrently with request handling so that
+// notifications/cancelled and a client disconnect (EOF) can abort an in-flight
+// tools/call — otherwise a busy run_command keeps burning remote CPU until its
+// timeout even after the agent chat ends.
 type Server struct {
 	rt     *Runtime
 	out    io.Writer
 	errOut io.Writer
 	tools  map[string]Tool
 	order  []string
+
+	inflightMu sync.Mutex
+	inflight   map[string]context.CancelFunc
 }
 
 // NewServer builds a Server over the runtime and streams. The tool catalogue
@@ -74,29 +84,63 @@ func NewServer(rt *Runtime, out io.Writer, errOut io.Writer) *Server {
 		byName[t.Name] = t
 		order = append(order, t.Name)
 	}
-	return &Server{rt: rt, out: out, errOut: errOut, tools: byName, order: order}
+	return &Server{
+		rt:       rt,
+		out:      out,
+		errOut:   errOut,
+		tools:    byName,
+		order:    order,
+		inflight: map[string]context.CancelFunc{},
+	}
 }
 
 // Serve runs the protocol loop until a clean EOF or a cancelled ctx (both
 // return nil) or a framing/I/O error (returned). Reading runs on a dedicated
-// goroutine so a cancelled ctx unblocks a client that holds stdin open; the
-// goroutine never writes and is abandoned at process exit.
+// goroutine so a cancelled ctx unblocks a client that holds stdin open, and
+// so cancel notifications are observed while tools/call is blocked in SSH.
+//
+// On stdin EOF or a read error the serve context is cancelled immediately so
+// the in-flight remote command stops before teardown (DisposeAll).
 func (s *Server) Serve(ctx context.Context, in io.Reader) error {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+
 	lines := make(chan lineResult)
 	go func() {
 		defer close(lines)
 		br := bufio.NewReader(in)
 		for {
 			line, err := readLine(br, MaxRequestBytes)
-			lines <- lineResult{line: line, err: err}
+			if err != nil {
+				// Only abort when a tools/call is actually running. A clean
+				// batch EOF (all requests already queued) must not cancel the
+				// call that the main loop is about to finish — but a disconnect
+				// mid-run_command must stop the remote command immediately.
+				s.inflightMu.Lock()
+				busy := len(s.inflight) > 0
+				s.inflightMu.Unlock()
+				if busy {
+					cancelServe()
+				}
+			} else if s.tryHandleCancelled(line) {
+				// Cancelled while tools/call is blocked: do not enqueue, the
+				// handler's request ctx is already cancelled.
+				continue
+			}
+			select {
+			case lines <- lineResult{line: line, err: err}:
+			case <-serveCtx.Done():
+				return
+			}
 			if err != nil {
 				return
 			}
 		}
 	}()
+
 	for {
 		select {
-		case <-ctx.Done():
+		case <-serveCtx.Done():
 			return nil
 		case r, ok := <-lines:
 			if !ok {
@@ -106,7 +150,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader) error {
 				return s.fail(r.err)
 			}
 			if len(r.line) > 0 {
-				if err := s.handleLine(ctx, r.line); err != nil {
+				if err := s.handleLine(serveCtx, r.line); err != nil {
 					return s.fail(err)
 				}
 			}
@@ -186,6 +230,47 @@ func isBlank(b []byte) bool {
 	return true
 }
 
+// rpcIDKey normalises a JSON-RPC id (raw JSON number/string) for the inflight map.
+func rpcIDKey(id json.RawMessage) string {
+	return string(bytes.TrimSpace(id))
+}
+
+// tryHandleCancelled handles notifications/cancelled on the reader goroutine
+// so an in-flight tools/call (blocked in the main loop) can be aborted. Returns
+// true when the line was a cancel notification (consumed, not enqueued).
+func (s *Server) tryHandleCancelled(line []byte) bool {
+	if isBlank(line) {
+		return false
+	}
+	var msg rpcMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return false
+	}
+	if msg.JSONRPC != "2.0" || msg.Method != "notifications/cancelled" || len(msg.ID) != 0 {
+		return false
+	}
+	s.handleCancelled(msg.Params)
+	return true
+}
+
+// handleCancelled aborts the in-flight request named by params.requestId.
+// Unknown or already-finished ids are ignored (MCP cancellation race rules).
+func (s *Server) handleCancelled(params json.RawMessage) {
+	var p struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil || len(p.RequestID) == 0 {
+		return
+	}
+	key := rpcIDKey(p.RequestID)
+	s.inflightMu.Lock()
+	cancel := s.inflight[key]
+	s.inflightMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // handleLine parses and dispatches one request line.
 func (s *Server) handleLine(ctx context.Context, line []byte) error {
 	if isBlank(line) {
@@ -206,7 +291,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) error {
 		return s.writeError(nil, -32600, "Invalid Request")
 	}
 	if len(msg.ID) == 0 {
-		// Notifications never get a response; unknown ones are ignored.
+		// Notifications never get a response; cancel was handled on the reader.
 		return nil
 	}
 	return s.handleRequest(ctx, msg)
@@ -260,6 +345,10 @@ func (s *Server) handleToolsList(id json.RawMessage) error {
 // in Runtime.Call and, like the TS zod handler, surfaces as a tool error
 // result (isError), never a JSON-RPC error. An unknown tool name is a
 // JSON-RPC Invalid params error (SDK parity).
+//
+// A per-request context is registered so notifications/cancelled (and serve
+// shutdown / stdin EOF) can abort the remote SSH exec. When that context is
+// cancelled, no JSON-RPC response is written (MCP cancellation rules).
 func (s *Server) handleToolsCall(ctx context.Context, id json.RawMessage, params json.RawMessage) error {
 	var p struct {
 		Name      string          `json:"name"`
@@ -277,7 +366,25 @@ func (s *Server) handleToolsCall(ctx context.Context, id json.RawMessage, params
 			return s.writeError(id, -32602, "Invalid params")
 		}
 	}
-	result, err := s.rt.Call(ctx, p.Name, args)
+
+	reqCtx, cancel := context.WithCancel(ctx)
+	key := rpcIDKey(id)
+	s.inflightMu.Lock()
+	s.inflight[key] = cancel
+	s.inflightMu.Unlock()
+	defer func() {
+		cancel()
+		s.inflightMu.Lock()
+		delete(s.inflight, key)
+		s.inflightMu.Unlock()
+	}()
+
+	result, err := s.rt.Call(reqCtx, p.Name, args)
+	if reqCtx.Err() != nil {
+		// Cancelled by notifications/cancelled or transport shutdown — do not
+		// respond (MCP: receivers SHOULD free resources and not send a result).
+		return nil
+	}
 	if err != nil {
 		return s.writeResult(id, toolErrorResult(err))
 	}

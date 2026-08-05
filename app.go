@@ -743,6 +743,49 @@ func (a *App) SftpDownload(sessionID, remotePath, defaultName string) error {
 	return svc.Download(sessionID, remotePath, target)
 }
 
+// sftpGUITextMaxBytes is the GUI text-editor cap; kept identical to the MCP
+// MaxFileBytes (512KiB) so the same remote files are editable in both paths.
+const sftpGUITextMaxBytes int64 = 512 * 1024
+
+// SftpTextContent is the SftpReadText IPC payload.
+type SftpTextContent struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// SftpTextPath is the SftpWriteText IPC payload.
+type SftpTextPath struct {
+	Path string `json:"path"`
+}
+
+// SftpReadText reads a remote text file (512KiB cap) for the in-app editor.
+func (a *App) SftpReadText(sessionID, remotePath string) (SftpTextContent, error) {
+	svc, err := a.sftpService()
+	if err != nil {
+		return SftpTextContent{}, err
+	}
+	resolved, content, err := svc.ReadText(sessionID, remotePath, sftpGUITextMaxBytes)
+	if err != nil {
+		return SftpTextContent{}, err
+	}
+	return SftpTextContent{Path: resolved, Content: content}, nil
+}
+
+// SftpWriteText writes UTF-8 text to a remote file (512KiB cap) from the
+// in-app editor. The service commits via temp+rename so a failed write never
+// truncates an existing target.
+func (a *App) SftpWriteText(sessionID, remotePath, content string) (SftpTextPath, error) {
+	svc, err := a.sftpService()
+	if err != nil {
+		return SftpTextPath{}, err
+	}
+	resolved, err := svc.WriteText(sessionID, remotePath, content, sftpGUITextMaxBytes)
+	if err != nil {
+		return SftpTextPath{}, err
+	}
+	return SftpTextPath{Path: resolved}, nil
+}
+
 // DialogOpenPrivateKeyFile opens the private-key picker. The returned path is
 // raw; the home-boundary constraint is enforced later by the credential
 // reader when the save payload is processed.

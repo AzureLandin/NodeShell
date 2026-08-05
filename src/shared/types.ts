@@ -161,6 +161,14 @@ export interface ElectronApi {
     upload: (sessionId: string) => Promise<void>
     uploadPaths: (sessionId: string, localPaths: string[]) => Promise<void>
     download: (sessionId: string, remotePath: string, defaultName: string) => Promise<void>
+    /** Read a remote text file for the in-app editor (max 512KiB). */
+    readText: (sessionId: string, remotePath: string) => Promise<{ path: string; content: string }>
+    /** Write UTF-8 text to a remote file from the in-app editor (max 512KiB). */
+    writeText: (
+      sessionId: string,
+      remotePath: string,
+      content: string
+    ) => Promise<{ path: string }>
     onTransferProgress: (cb: (event: SftpTransferProgressEvent) => void) => () => void
   }
   files: {
@@ -241,6 +249,8 @@ export const IPC = {
   sftpUpload: 'sftp:upload',
   sftpUploadPaths: 'sftp:uploadPaths',
   sftpDownload: 'sftp:download',
+  sftpReadText: 'sftp:readText',
+  sftpWriteText: 'sftp:writeText',
   sftpTransferProgress: 'sftp:transferProgress',
   monitorSetActive: 'monitor:setActive',
   monitorUpdate: 'monitor:update',

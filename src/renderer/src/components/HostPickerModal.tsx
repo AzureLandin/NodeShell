@@ -9,10 +9,7 @@ interface HostPickerModalProps {
   hosts: HostConfig[]
   connecting?: boolean
   connectingHost?: HostConfig | null
-  connectError?: string | null
   onConnect: (host: HostConfig) => void
-  onCancelConnect?: () => void
-  onDismissConnectError?: () => void
   onCreate: (result: HostFormSubmit) => Promise<void>
   onUpdate: (id: string, result: HostFormSubmit) => Promise<void>
   onRemove: (id: string) => Promise<void>
@@ -25,10 +22,7 @@ function HostPickerModalBody({
   hosts,
   connecting,
   connectingHost,
-  connectError,
   onConnect,
-  onCancelConnect,
-  onDismissConnectError,
   onCreate,
   onUpdate,
   onRemove,
@@ -38,10 +32,7 @@ function HostPickerModalBody({
   hosts: HostConfig[]
   connecting: boolean
   connectingHost: HostConfig | null
-  connectError: string | null
   onConnect: (host: HostConfig) => void
-  onCancelConnect?: () => void
-  onDismissConnectError?: () => void
   onCreate: (result: HostFormSubmit) => Promise<void>
   onUpdate: (id: string, result: HostFormSubmit) => Promise<void>
   onRemove: (id: string) => Promise<void>
@@ -51,16 +42,6 @@ function HostPickerModalBody({
   const { t } = useTranslation()
   const requestClose = useModalClose()
   const [pendingDelete, setPendingDelete] = useState<HostConfig | null>(null)
-  const [showSlowHint, setShowSlowHint] = useState(false)
-
-  useEffect(() => {
-    if (!connecting) {
-      setShowSlowHint(false)
-      return
-    }
-    const id = window.setTimeout(() => setShowSlowHint(true), 3000)
-    return () => window.clearTimeout(id)
-  }, [connecting])
 
   const handleDelete = (host: HostConfig): void => {
     setPendingDelete(host)
@@ -108,53 +89,6 @@ function HostPickerModalBody({
           </button>
         </div>
       </div>
-
-      {connectingHost && (connecting || connectError) && (
-        <div className="host-picker-banner">
-          <div
-            className={`host-picker-connecting${connectError ? ' host-picker-connecting--error' : ''}`}
-            role={connectError ? 'alert' : 'status'}
-            aria-live="polite"
-          >
-            {connecting && !connectError ? (
-              <>
-                <div className="host-picker-connecting-body">
-                  <p className="host-picker-connecting-status">
-                    {t('auth.connectingStatus', {
-                      name: connectingHost.name,
-                      host: connectingHost.host,
-                      port: connectingHost.port
-                    })}
-                  </p>
-                  {showSlowHint && (
-                    <p className="host-picker-connecting-hint">{t('auth.connectingHint')}</p>
-                  )}
-                </div>
-                {onCancelConnect && (
-                  <button type="button" className="btn-secondary btn-sm" onClick={onCancelConnect}>
-                    {t('auth.cancelConnect')}
-                  </button>
-                )}
-              </>
-            ) : (
-              <>
-                <p className="host-picker-connecting-status host-picker-connecting-error">
-                  {connectError}
-                </p>
-                {onDismissConnectError && (
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm"
-                    onClick={onDismissConnectError}
-                  >
-                    {t('common.dismiss')}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {formMode ? (
         <div className="host-form-overlay host-form-overlay-in-modal">
@@ -262,10 +196,7 @@ export function HostPickerModal({
   hosts,
   connecting = false,
   connectingHost = null,
-  connectError = null,
   onConnect,
-  onCancelConnect,
-  onDismissConnectError,
   onCreate,
   onUpdate,
   onRemove,
@@ -293,10 +224,7 @@ export function HostPickerModal({
         hosts={hosts}
         connecting={connecting}
         connectingHost={connectingHost}
-        connectError={connectError}
         onConnect={onConnect}
-        onCancelConnect={onCancelConnect}
-        onDismissConnectError={onDismissConnectError}
         onCreate={onCreate}
         onUpdate={onUpdate}
         onRemove={onRemove}

@@ -144,12 +144,8 @@ button.hosts-launcher:hover:not(:disabled) {
 }
 
 .hosts-launcher-icon {
-  width: 14px;
-  height: 11px;
-  border-radius: 2px;
-  background: linear-gradient(160deg, var(--icon-folder-start) 0%, var(--icon-folder-end) 100%);
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
-  clip-path: polygon(0 22%, 38% 22%, 46% 0, 100% 0, 100% 100%, 0 100%);
+  font-size: 13px;
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
@@ -246,6 +242,30 @@ button.hosts-launcher:hover:not(:disabled) {
   color: var(--text-warm);
 }
 
+.session-connecting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  padding: 24px;
+  text-align: center;
+}
+
+.session-connecting-status {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.session-connecting-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .session-terminals {
   position: relative;
   flex: 1;
@@ -271,20 +291,24 @@ button.hosts-launcher:hover:not(:disabled) {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  height: var(--app-bottom-bar-height);
-  overflow: hidden;
+  height: auto;
+  /* Do NOT set overflow:hidden here. In Chromium/Wails, overflow:hidden on this
+     wrapper + a transform transition on the chevron makes the title text fail to
+     paint for the duration of the expand/collapse animation. Clipping belongs on
+     .sftp-panel-collapse only. */
   background: var(--bg-elevated);
-  transition: height 300ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.sftp-panel-expanded {
-  height: calc(var(--app-bottom-bar-height) + var(--sftp-body-height));
 }
 
 .sftp-panel-collapse {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  height: 0;
   min-height: 0;
   overflow: hidden;
+  transition: height 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sftp-panel-expanded .sftp-panel-collapse {
+  height: var(--sftp-body-height);
 }
 
 .sftp-panel-collapse-inner {
@@ -293,11 +317,7 @@ button.hosts-launcher:hover:not(:disabled) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sftp-panel {
-    transition: none;
-  }
-
-  .sftp-panel-chevron {
+  .sftp-panel-collapse {
     transition: none;
   }
 }
@@ -309,6 +329,7 @@ button.sftp-panel-toggle {
   width: 100%;
   height: var(--app-bottom-bar-height);
   min-height: var(--app-bottom-bar-height);
+  flex: 0 0 auto;
   padding: 0 14px;
   background: var(--bg-panel);
   border: none;
@@ -322,6 +343,9 @@ button.sftp-panel-toggle {
   outline: none;
   box-shadow: none;
   box-sizing: border-box;
+  /* Own stacking context so the body height animation cannot blank the label. */
+  position: relative;
+  z-index: 1;
 }
 
 button.sftp-panel-toggle:hover:not(:disabled) {
@@ -354,21 +378,14 @@ button.sftp-panel-toggle:focus-visible {
   text-align: center;
   flex-shrink: 0;
   display: inline-block;
-  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.sftp-panel-expanded .sftp-panel-chevron {
-  transform: rotate(0deg);
-}
-
-.sftp-panel:not(.sftp-panel-expanded) .sftp-panel-chevron {
-  transform: rotate(-180deg);
 }
 
 .sftp-panel-title {
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .sftp-status-dot {
@@ -538,7 +555,8 @@ button.sftp-panel-toggle:focus-visible {
 .sftp-list-header,
 .sftp-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 148px 168px;
+  /* Actions column is auto so 3- or 4-button rows (Edit) keep labels horizontal. */
+  grid-template-columns: minmax(0, 1fr) 88px 148px auto;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -635,24 +653,27 @@ button.sftp-item-main {
 
 .sftp-item-icon {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 1em;
   margin-right: 8px;
-  vertical-align: -2px;
-  border-radius: 2px;
+  vertical-align: -0.125em;
   flex-shrink: 0;
+  font-size: 14px;
 }
 
 .sftp-item-icon-dir {
-  background: linear-gradient(160deg, var(--icon-folder-start) 0%, var(--icon-folder-end) 100%);
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
-  clip-path: polygon(0 20%, 40% 20%, 48% 0, 100% 0, 100% 100%, 0 100%);
+  color: var(--icon-folder-start);
 }
 
 .sftp-item-icon-file {
-  background: linear-gradient(180deg, var(--accent-primary) 0%, var(--accent-primary-dark) 100%);
-  border: 1px solid var(--accent-info);
-  border-radius: 2px;
+  color: var(--text-secondary);
+}
+
+.sftp-item-selected .sftp-item-icon-dir {
+  color: var(--text-warm);
+}
+
+.sftp-item-selected .sftp-item-icon-file {
+  color: var(--text-on-accent);
 }
 
 .sftp-item-dir .sftp-col-name {
@@ -665,6 +686,11 @@ button.sftp-item-main {
   gap: 4px;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+
+.sftp-item-actions .btn-sm {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .sftp-placeholder {
@@ -683,23 +709,9 @@ button.sftp-item-main {
 }
 
 .sftp-placeholder-icon {
-  width: 36px;
-  height: 28px;
-  border-radius: 3px;
-  background: linear-gradient(160deg, var(--scrollbar-thumb) 0%, var(--border-strong) 100%);
-  position: relative;
-  opacity: 0.7;
-}
-
-.sftp-placeholder-icon::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: -6px;
-  width: 14px;
-  height: 8px;
-  border-radius: 2px 2px 0 0;
-  background: var(--text-muted);
+  font-size: 32px;
+  color: var(--icon-folder-start);
+  opacity: 0.75;
 }
 
 .sftp-empty,
@@ -723,7 +735,7 @@ button.sftp-item-main {
 @media (max-width: 900px) {
   .sftp-list-header,
   .sftp-item {
-    grid-template-columns: minmax(0, 1fr) 72px 120px;
+    grid-template-columns: minmax(0, 1fr) 72px auto;
   }
 
   .sftp-col-mtime {
@@ -855,6 +867,81 @@ button.sftp-item-main {
 
 .modal.about-modal {
   width: min(420px, calc(100vw - 32px));
+}
+
+.modal.sftp-editor-modal {
+  width: min(900px, calc(100vw - 32px));
+  height: min(80vh, 720px);
+  max-height: min(90vh, 800px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  overflow: hidden;
+}
+
+.sftp-editor-header {
+  flex-shrink: 0;
+  align-items: flex-start;
+}
+
+.sftp-editor-title-block {
+  min-width: 0;
+  flex: 1;
+}
+
+.sftp-editor-title-block .modal-title {
+  margin-bottom: 4px;
+}
+
+.sftp-editor-path {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-editor-error {
+  flex-shrink: 0;
+  margin: 0 0 8px;
+}
+
+.sftp-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+.sftp-code-editor {
+  flex: 1;
+  min-height: 280px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+.sftp-code-editor .cm-editor {
+  height: 100%;
+}
+
+.sftp-code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.sftp-code-editor:focus-within {
+  border-color: var(--accent-primary);
+}
+
+.sftp-editor-actions {
+  flex-shrink: 0;
+  margin-top: 0;
 }
 
 .about-body {
@@ -1507,86 +1594,6 @@ button.sftp-item-main {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.host-picker-banner {
-  flex-shrink: 0;
-  padding: 12px 12px 0;
-  box-sizing: border-box;
-}
-
-.host-picker-connecting {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  box-sizing: border-box;
-  width: 100%;
-  animation: host-picker-banner-in 200ms ease-out both;
-}
-
-.host-picker-connecting-body {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.host-picker-connecting--error {
-  border-color: var(--border-danger);
-  background: color-mix(in srgb, var(--text-error) 10%, var(--bg-card));
-}
-
-.host-picker-connecting-status {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  min-width: 0;
-  flex: 1;
-}
-
-.host-picker-connecting-error {
-  color: var(--text-error);
-}
-
-.host-picker-connecting-hint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-subtle);
-  overflow-wrap: anywhere;
-}
-
-.host-picker-connecting > .btn-secondary {
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-
-@keyframes host-picker-banner-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .host-picker-connecting {
-    animation: none;
-  }
 }
 
 .host-picker-list {

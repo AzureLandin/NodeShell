@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFile, faFolder } from '@fortawesome/free-solid-svg-icons'
 import type { SftpTransferProgressEvent } from '../../../shared/types'
+import { isEditableTextFile, MAX_EDITABLE_TEXT_BYTES } from '../../../shared/editable-text'
 import { ConfirmModal } from './ConfirmModal'
+import { SftpTextEditorModal, type SftpTextEditorTarget } from './SftpTextEditorModal'
 
 interface SftpEntry {
   name: string
@@ -60,6 +64,7 @@ export function SftpPanel({
   const [transfer, setTransfer] = useState<SftpTransferProgressEvent | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SftpEntry | null>(null)
+  const [editTarget, setEditTarget] = useState<SftpTextEditorTarget | null>(null)
   /** Session id whose listing is currently cached in UI state. */
   const loadedForSessionRef = useRef<string | null>(null)
   const requestGenRef = useRef(0)
@@ -104,6 +109,7 @@ export function SftpPanel({
         setError(null)
         setSelectedPath(null)
         setTransfer(null)
+        setEditTarget(null)
         loadedForSessionRef.current = null
       }
       return
@@ -247,6 +253,28 @@ export function SftpPanel({
     }
   }
 
+  const openEditor = (entry: SftpEntry): void => {
+    if (!sessionId || entry.isDirectory) return
+    if (entry.size > MAX_EDITABLE_TEXT_BYTES) {
+      setError(t('sftp.editTooLarge'))
+      return
+    }
+    setError(null)
+    setEditTarget({ name: entry.name, remotePath: entry.name })
+  }
+
+  const handleFileActivate = (entry: SftpEntry): void => {
+    if (entry.isDirectory) {
+      void openDir(entry.name)
+      return
+    }
+    if (isEditableTextFile(entry.name)) {
+      openEditor(entry)
+      return
+    }
+    void handleDownload(entry)
+  }
+
   const resetDrag = (): void => {
     dragDepthRef.current = 0
     setDragOver(false)
@@ -312,7 +340,7 @@ export function SftpPanel({
     <div className={`sftp-panel${expanded ? ' sftp-panel-expanded' : ''}`}>
       <button type="button" className="sftp-panel-toggle" onClick={onToggle}>
         <span className="sftp-panel-chevron" aria-hidden>
-          ▾
+          {expanded ? '▾' : '▴'}
         </span>
         <span className="sftp-panel-title">{t('sftp.title')}</span>
         {connected && (
@@ -351,7 +379,7 @@ export function SftpPanel({
           )}
           {!connected || !sessionId ? (
             <div className="sftp-placeholder">
-              <div className="sftp-placeholder-icon" aria-hidden />
+              <FontAwesomeIcon icon={faFolder} className="sftp-placeholder-icon" aria-hidden />
               <p className="sftp-empty">{t('sftp.needSession')}</p>
             </div>
           ) : (
@@ -465,13 +493,11 @@ export function SftpPanel({
                             type="button"
                             className="sftp-item-main"
                             onClick={() => setSelectedPath(entry.path)}
-                            onDoubleClick={() => {
-                              if (entry.isDirectory) void openDir(entry.name)
-                              else void handleDownload(entry)
-                            }}
+                            onDoubleClick={() => handleFileActivate(entry)}
                           >
                             <span className="sftp-col-name" title={entry.name}>
-                              <span
+                              <FontAwesomeIcon
+                                icon={entry.isDirectory ? faFolder : faFile}
                                 className={`sftp-item-icon${entry.isDirectory ? ' sftp-item-icon-dir' : ' sftp-item-icon-file'}`}
                                 aria-hidden
                               />
@@ -483,6 +509,15 @@ export function SftpPanel({
                             <span className="sftp-col-mtime">{formatTime(entry.modifyTime)}</span>
                           </button>
                           <div className="sftp-item-actions">
+                            {!entry.isDirectory && isEditableTextFile(entry.name) && (
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                onClick={() => openEditor(entry)}
+                              >
+                                {t('sftp.edit')}
+                              </button>
+                            )}
                             {!entry.isDirectory && (
                               <button
                                 type="button"
@@ -526,6 +561,14 @@ export function SftpPanel({
           confirmLabel={t('sftp.delete')}
           onConfirm={() => void confirmDelete()}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {editTarget && sessionId && (
+        <SftpTextEditorModal
+          sessionId={sessionId}
+          target={editTarget}
+          onClose={() => setEditTarget(null)}
         />
       )}
     </div>

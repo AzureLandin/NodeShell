@@ -1,10 +1,10 @@
 // Package sftpservice owns the per-session SFTP file operations: list, cwd,
 // chdir, mkdir, rename, recursive remove, upload and download with transfer
-// progress events, plus capped text read/write for MCP. Remote paths are
-// POSIX-normalised with the path package; local paths (upload sources,
-// download targets) are checked against the user home directory through
-// localpathguard. It depends only on the sshclient SFTP surface and a session
-// resolver — never on Wails or the sessions package.
+// progress events, plus capped text read/write for MCP and the GUI editor.
+// Remote paths are POSIX-normalised with the path package; local paths
+// (upload sources, download targets) are checked against the user home
+// directory through localpathguard. It depends only on the sshclient SFTP
+// surface and a session resolver — never on Wails or the sessions package.
 package sftpservice
 
 import (
