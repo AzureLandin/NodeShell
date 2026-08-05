@@ -11,7 +11,7 @@
     root.dataset.theme = theme
     root.style.colorScheme = theme
     root.style.background = dark ? '#121212' : '#eef1f5'
-  } catch (_) {
+  } catch {
     /* keep index.html dark defaults */
   }
 })()
