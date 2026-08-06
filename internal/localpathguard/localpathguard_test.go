@@ -19,6 +19,36 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// sameResolvedPath reports whether got and want name the same filesystem
+// location. On Windows, t.TempDir() may yield an 8.3 short path (RUNNER~1)
+// while filepath.EvalSymlinks expands it to the long form (runneradmin); the
+// guard always returns the EvalSymlinks form, so byte-equality against the
+// input path is not portable.
+func sameResolvedPath(got, want string) bool {
+	if got == want {
+		return true
+	}
+	g, errG := filepath.EvalSymlinks(filepath.Clean(got))
+	w, errW := filepath.EvalSymlinks(filepath.Clean(want))
+	if errG == nil && errW == nil {
+		if runtime.GOOS == "windows" {
+			return strings.EqualFold(g, w)
+		}
+		return g == w
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(got), filepath.Clean(want))
+	}
+	return false
+}
+
+func assertSameResolvedPath(t *testing.T, got, want string) {
+	t.Helper()
+	if !sameResolvedPath(got, want) {
+		t.Fatalf("resolved = %q, want %q", got, want)
+	}
+}
+
 func makeSymlink(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
@@ -47,9 +77,7 @@ func TestResolveExistingInsideHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveExisting: %v", err)
 	}
-	if got != p {
-		t.Fatalf("resolved = %q, want %q", got, p)
-	}
+	assertSameResolvedPath(t, got, p)
 }
 
 func TestResolveExistingOutsideHomeRejected(t *testing.T) {
@@ -80,9 +108,7 @@ func TestResolveExistingSymlinkInsideHomeAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveExisting: %v", err)
 	}
-	if got != target {
-		t.Fatalf("resolved = %q, want %q (symlink inside home is allowed)", got, target)
-	}
+	assertSameResolvedPath(t, got, target)
 }
 
 func TestResolveExistingMissingFileErrors(t *testing.T) {
@@ -116,9 +142,7 @@ func TestResolveTargetExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTarget: %v", err)
 	}
-	if got != p {
-		t.Fatalf("resolved = %q, want %q", got, p)
-	}
+	assertSameResolvedPath(t, got, p)
 }
 
 func TestResolveTargetMissingLeafPreserved(t *testing.T) {
@@ -133,9 +157,7 @@ func TestResolveTargetMissingLeafPreserved(t *testing.T) {
 		t.Fatalf("ResolveTarget: %v", err)
 	}
 	// The leaf is preserved verbatim, the parent resolved.
-	if got != target {
-		t.Fatalf("resolved = %q, want %q (leaf preserved)", got, target)
-	}
+	assertSameResolvedPath(t, got, target)
 }
 
 func TestResolveTargetMissingParentRejected(t *testing.T) {
@@ -184,7 +206,7 @@ func TestResolveCaseVariantBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveExisting with a case-variant home must be accepted on Windows: %v", err)
 		}
-		if !strings.EqualFold(got, p) {
+		if !sameResolvedPath(got, p) {
 			t.Fatalf("resolved = %q, want a case-insensitive match of %q", got, p)
 		}
 		target := filepath.Join(home, "Docs", "new.txt")
@@ -192,7 +214,7 @@ func TestResolveCaseVariantBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveTarget with a case-variant home must be accepted on Windows: %v", err)
 		}
-		if !strings.EqualFold(gotTarget, target) {
+		if !sameResolvedPath(gotTarget, target) {
 			t.Fatalf("target resolved = %q, want a case-insensitive match of %q", gotTarget, target)
 		}
 		return
