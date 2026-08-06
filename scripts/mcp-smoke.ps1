@@ -23,12 +23,25 @@ try {
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
+  # PS 5.1 ProcessStartInfo has no StandardInputEncoding; StreamWriter.Write
+  # can still emit a BOM / use the console code page and turn the first
+  # JSON-RPC line into a parse error (empty protocolVersion). Write raw
+  # UTF-8 bytes to BaseStream instead. Set stdout/stderr encodings when the
+  # properties exist (.NET Framework 4.x+).
+  if ($psi.PSObject.Properties['StandardOutputEncoding']) {
+    $psi.StandardOutputEncoding = $utf8NoBom
+  }
+  if ($psi.PSObject.Properties['StandardErrorEncoding']) {
+    $psi.StandardErrorEncoding = $utf8NoBom
+  }
   $p = New-Object System.Diagnostics.Process
   $p.StartInfo = $psi
   $null = $p.Start()
   $outTask = $p.StandardOutput.ReadToEndAsync()
   $errTask = $p.StandardError.ReadToEndAsync()
-  $p.StandardInput.Write([System.IO.File]::ReadAllText($in))
+  $bytes = [System.IO.File]::ReadAllBytes($in)
+  $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+  $p.StandardInput.BaseStream.Flush()
   $p.StandardInput.Close()
   if (-not $p.WaitForExit(30000)) { $p.Kill(); throw 'MCP process timed out' }
   $out = $outTask.Result
@@ -36,11 +49,18 @@ try {
   if ($p.ExitCode -ne 0) { throw "MCP exit $($p.ExitCode): $err" }
   if ($err.Length -ne 0) { throw "MCP stderr not empty: $err" }
   $responses = @($out -split "`r?`n" | Where-Object { $_ })
-  if ($responses.Count -ne 3) { throw "expected 3 responses, got $($responses.Count)" }
-  $init = $responses[0] | ConvertFrom-Json
-  if ($init.result.protocolVersion -ne '2024-11-05') { throw "protocol mismatch: $($init.result.protocolVersion)" }
+  if ($responses.Count -ne 3) {
+    throw "expected 3 responses, got $($responses.Count): $($responses -join ' | ')"
+  }
+  # Match the bash smoke script: string-check protocolVersion so PS 5.1
+  # ConvertFrom-Json nesting quirks cannot hide a real handshake failure.
+  if ($responses[0] -notmatch '"protocolVersion"\s*:\s*"2024-11-05"') {
+    throw "protocol mismatch: $($responses[0])"
+  }
   $tools = $responses[1] | ConvertFrom-Json
-  if (@($tools.result.tools).Count -ne 10) { throw "expected 10 tools, got $(@($tools.result.tools).Count)" }
+  if (@($tools.result.tools).Count -ne 10) {
+    throw "expected 10 tools, got $(@($tools.result.tools).Count)"
+  }
   Write-Host 'MCP smoke OK'
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
