@@ -118,12 +118,13 @@ jobs:
           # Test packages one-by-one so a hung package is identifiable (2m cap each).
           tmp="$(mktemp)"
           go list ./... | grep -v '/node_modules/' >"$tmp" || true
-          while IFS= read -r pkg || [ -n "$pkg" ]; do
-            [ -z "$pkg" ] && continue
-            echo "=== TEST $pkg ==="
-            # Intentionally unquoted race flag expansion when empty.
-            go test ${{ matrix.go-test-race }} -count=1 -timeout 2m -v "$pkg"
-          done <"$tmp"
+          {
+            while IFS= read -r pkg || [ -n "$pkg" ]; do
+              [ -z "$pkg" ] && continue
+              echo "=== TEST $pkg ==="
+              go test ${{ matrix.go-test-race }} -count=1 -timeout 2m -v "$pkg"
+            done <"$tmp"
+          } 2>&1 | tee go-test.log
           rm -f "$tmp"
 
       - name: Upload go-test log
