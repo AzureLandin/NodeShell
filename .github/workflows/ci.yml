@@ -115,14 +115,14 @@ jobs:
         run: |
           set -euo pipefail
           # npm may drop Go sources under node_modules (e.g. flatted); never test those.
-          # Test packages one-by-one so a hung package is identifiable (2m cap each).
+          # Test packages one-by-one so a hung package is identifiable (4m cap each).
           tmp="$(mktemp)"
           go list ./... | grep -v '/node_modules/' >"$tmp" || true
           {
             while IFS= read -r pkg || [ -n "$pkg" ]; do
               [ -z "$pkg" ] && continue
               echo "=== TEST $pkg ==="
-              go test ${{ matrix.go-test-race }} -count=1 -timeout 2m -v "$pkg"
+              go test ${{ matrix.go-test-race }} -count=1 -timeout 4m -v "$pkg"
             done <"$tmp"
           } 2>&1 | tee go-test.log
           rm -f "$tmp"

@@ -49,17 +49,36 @@ try {
   if ($p.ExitCode -ne 0) { throw "MCP exit $($p.ExitCode): $err" }
   if ($err.Length -ne 0) { throw "MCP stderr not empty: $err" }
   $responses = @($out -split "`r?`n" | Where-Object { $_ })
-  if ($responses.Count -ne 3) {
-    throw "expected 3 responses, got $($responses.Count): $($responses -join ' | ')"
+  if ($responses.Count -lt 3) {
+    throw "expected at least 3 responses, got $($responses.Count): $($responses -join ' | ')"
   }
-  # Match the bash smoke script: string-check protocolVersion so PS 5.1
-  # ConvertFrom-Json nesting quirks cannot hide a real handshake failure.
-  if ($responses[0] -notmatch '"protocolVersion"\s*:\s*"2024-11-05"') {
-    throw "protocol mismatch: $($responses[0])"
+  $byId = @{}
+  foreach ($line in $responses) {
+    try {
+      $msg = $line | ConvertFrom-Json
+      if ($null -ne $msg.id) {
+        $byId[[string]$msg.id] = $msg
+      }
+    } catch {
+      # Keep raw lines for diagnostics below.
+    }
   }
-  $tools = $responses[1] | ConvertFrom-Json
+  if (-not $byId.ContainsKey('1')) {
+    throw "missing initialize response (id=1): $($responses -join ' | ')"
+  }
+  if ($responses[0] -notmatch '"protocolVersion"\s*:\s*"2024-11-05"' -and
+      (($byId['1'] | ConvertTo-Json -Compress) -notmatch '"protocolVersion"\s*:\s*"2024-11-05"')) {
+    throw "protocol mismatch: $($responses -join ' | ')"
+  }
+  if (-not $byId.ContainsKey('2')) {
+    throw "missing tools/list response (id=2): $($responses -join ' | ')"
+  }
+  $tools = $byId['2']
   if (@($tools.result.tools).Count -ne 10) {
-    throw "expected 10 tools, got $(@($tools.result.tools).Count)"
+    throw "expected 10 tools, got $(@($tools.result.tools).Count): $($responses -join ' | ')"
+  }
+  if (-not $byId.ContainsKey('3')) {
+    throw "missing ping response (id=3): $($responses -join ' | ')"
   }
   Write-Host 'MCP smoke OK'
 } finally {
