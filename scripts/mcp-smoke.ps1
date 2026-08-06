@@ -1,12 +1,18 @@
 $ErrorActionPreference = 'Stop'
 $exe = $args[0]
-if (-not (Test-Path $exe)) {
-  $alt = Join-Path (Split-Path -Parent $exe) 'nodeshell-amd64.exe'
-  if (Test-Path $alt) {
-    $exe = $alt
-  } else {
-    throw "MCP target not found: $exe (also checked $alt)"
+if (-not (Test-Path -LiteralPath $exe)) {
+  $dir = Split-Path -Parent $exe
+  $candidates = @(Get-ChildItem -LiteralPath $dir -Filter 'nodeshell*.exe' -ErrorAction SilentlyContinue |
+    Sort-Object Name | ForEach-Object { $_.FullName })
+  if ($candidates.Count -eq 0) {
+    $listing = '(missing dir)'
+    if (Test-Path -LiteralPath $dir) {
+      $listing = @(Get-ChildItem -LiteralPath $dir -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '
+    }
+    throw "MCP target not found: $exe (dir contents: $listing)"
   }
+  $exe = $candidates[0]
+  Write-Host "MCP smoke using $exe"
 }
 $tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + "mcp-smoke-$([guid]::NewGuid())") -Force
 $in = Join-Path $tmp 'in.jsonl'

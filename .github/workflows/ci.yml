@@ -22,7 +22,10 @@ jobs:
         include:
           - platform: windows
             runner: windows-latest
-            wails-args: -platform windows/amd64 -nsis
+            # -windowsconsole keeps a console subsystem so --mcp stdio works
+            # under redirected Process handles (GUI-subsystem exes break smoke
+            # and MCP client registration on Windows). runGUI FreeConsole()s.
+            wails-args: -platform windows/amd64 -nsis -windowsconsole
             # Race needs a MinGW cgo toolchain that windows-latest often lacks.
             go-test-race: ''
             smoke-cmd: powershell -File scripts/mcp-smoke.ps1
@@ -119,13 +122,22 @@ jobs:
           tmp="$(mktemp)"
           go list ./... | grep -v '/node_modules/' >"$tmp" || true
           {
+            failed=0
             while IFS= read -r pkg || [ -n "$pkg" ]; do
               [ -z "$pkg" ] && continue
               echo "=== TEST $pkg ==="
-              go test ${{ matrix.go-test-race }} -count=1 -timeout 4m -v "$pkg"
+              if ! go test ${{ matrix.go-test-race }} -count=1 -timeout 4m -v "$pkg"; then
+                echo "=== FAILED $pkg ==="
+                failed=1
+                break
+              fi
             done <"$tmp"
+            rm -f "$tmp"
+            exit "$failed"
           } 2>&1 | tee go-test.log
-          rm -f "$tmp"
+          # pipefail already fails the step when a package fails; this keeps the
+          # intent explicit if the shell's pipefail behaviour differs.
+          test "${PIPESTATUS[0]}" -eq 0
 
       - name: Upload go-test log
         if: failure()

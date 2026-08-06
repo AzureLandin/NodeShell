@@ -3,6 +3,7 @@ package mcpcli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,16 +91,31 @@ func TestRunMCPCtxCancelShutsDown(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"connect_host","arguments":{"hostId":"h1"}}}`,
 	}, "\n") + "\n"
 
+	// Keep stdin open until connect_host is in flight. strings.NewReader hits
+	// EOF as soon as the last byte is read, which races Serve's EOF path and
+	// can cancel before tools/call starts — then <-connectStart hangs until
+	// the package timeout (seen as a ~4m CI failure on linux/mac).
 	var out, errOut bytes.Buffer
+	inR, inW := io.Pipe()
 	runDone := make(chan struct{})
 	var runErr error
 	go func() {
 		defer close(runDone)
-		runErr = RunMCP(ctx, strings.NewReader(input), &out, &errOut)
+		runErr = RunMCP(ctx, inR, &out, &errOut)
 	}()
+	if _, err := io.WriteString(inW, input); err != nil {
+		_ = inW.Close()
+		t.Fatalf("write input: %v", err)
+	}
 
-	<-m.connectStart // the connect_host call is in flight and blocked
+	select {
+	case <-m.connectStart: // the connect_host call is in flight and blocked
+	case <-time.After(5 * time.Second):
+		_ = inW.Close()
+		t.Fatal("connect_host did not start")
+	}
 	cancel()
+	_ = inW.Close()
 
 	select {
 	case <-runDone:

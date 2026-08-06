@@ -75,6 +75,10 @@ func runMCP() int {
 
 // runGUI starts the Wails desktop application.
 func runGUI() int {
+	// Windows CI/release builds use -windowsconsole so --mcp can use redirected
+	// stdin/stdout. Detach that console for the GUI entry so a terminal does
+	// not flash when the user launches the desktop app.
+	detachConsole()
 	app := NewApp()
 	err := wails.Run(&options.App{
 		Title:  "NodeShell",
