@@ -113,20 +113,18 @@ jobs:
       - name: Go tests
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           # npm may drop Go sources under node_modules (e.g. flatted); never test those.
-          # Avoid mapfile (bash 4+ only) — macOS runners still ship bash 3.2.
-          pkgs="$(go list ./... | grep -v '/node_modules/' | tr '\n' ' ')"
-          # shellcheck disable=SC2086
-          go test ${{ matrix.go-test-race }} -count=1 -timeout 15m -v $pkgs 2>&1 | tee go-test.log
-          rc=${PIPESTATUS[0]}
-          if [ "$rc" -ne 0 ]; then
-            echo "=== FAIL markers ==="
-            grep -E '^(--- FAIL|=== RUN.*panic|panic:|FAIL\t|ok  .*FAIL)' go-test.log | head -40
-            grep -E '^\s+.*_test\.go:[0-9]+:' go-test.log | head -40
-            echo "::error::go test failed (rc=$rc); see go-test.log artifact"
-            exit "$rc"
-          fi
+          # Test packages one-by-one so a hung package is identifiable (2m cap each).
+          tmp="$(mktemp)"
+          go list ./... | grep -v '/node_modules/' >"$tmp" || true
+          while IFS= read -r pkg || [ -n "$pkg" ]; do
+            [ -z "$pkg" ] && continue
+            echo "=== TEST $pkg ==="
+            # Intentionally unquoted race flag expansion when empty.
+            go test ${{ matrix.go-test-race }} -count=1 -timeout 2m -v "$pkg"
+          done <"$tmp"
+          rm -f "$tmp"
 
       - name: Upload go-test log
         if: failure()
