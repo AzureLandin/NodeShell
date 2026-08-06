@@ -1,5 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $exe = $args[0]
+if (-not (Test-Path $exe)) {
+  $alt = Join-Path (Split-Path -Parent $exe) 'nodeshell-amd64.exe'
+  if (Test-Path $alt) {
+    $exe = $alt
+  } else {
+    throw "MCP target not found: $exe (also checked $alt)"
+  }
+}
 $tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + "mcp-smoke-$([guid]::NewGuid())") -Force
 $in = Join-Path $tmp 'in.jsonl'
 try {
