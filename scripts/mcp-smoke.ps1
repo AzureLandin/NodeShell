@@ -16,6 +16,8 @@ if (-not (Test-Path -LiteralPath $exe)) {
 }
 $tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + "mcp-smoke-$([guid]::NewGuid())") -Force
 $in = Join-Path $tmp 'in.jsonl'
+$outFile = Join-Path $tmp 'out.txt'
+$errFile = Join-Path $tmp 'err.txt'
 try {
   $lines = @(
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}',
@@ -23,77 +25,56 @@ try {
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
     '{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}'
   )
-  # PS 5.1 Set-Content -Encoding utf8 prepends a BOM, corrupting the first
-  # JSON line (parse error -32700). Write UTF-8 without BOM instead.
+  # PS 5.1 Set-Content -Encoding utf8 prepends a BOM. Write UTF-8 without BOM.
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllLines($in, $lines, $utf8NoBom)
 
-  # Start-Process -PassThru reports a null ExitCode under PS 5.1; drive the
-  # .NET Process directly so WaitForExit/ExitCode are reliable.
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $exe
-  $psi.Arguments = '--mcp'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardInput = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  # PS 5.1 ProcessStartInfo has no StandardInputEncoding; StreamWriter.Write
-  # can still emit a BOM / use the console code page and turn the first
-  # JSON-RPC line into a parse error (empty protocolVersion). Write raw
-  # UTF-8 bytes to BaseStream instead. Set stdout/stderr encodings when the
-  # properties exist (.NET Framework 4.x+).
-  if ($psi.PSObject.Properties['StandardOutputEncoding']) {
-    $psi.StandardOutputEncoding = $utf8NoBom
+  # Drive the exe through cmd.exe file redirection. .NET Process + StreamWriter
+  # has repeatedly corrupted or dropped MCP stdio on windows-latest even after
+  # -windowsconsole; cmd's < / > handles match how MCP clients spawn the binary.
+  $exeFull = (Resolve-Path -LiteralPath $exe).Path
+  $cmd = '"{0}" --mcp < "{1}" > "{2}" 2> "{3}"' -f $exeFull, $in, $outFile, $errFile
+  $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmd) -Wait -PassThru -NoNewWindow
+  $code = $p.ExitCode
+  if ($null -eq $code) { $code = $LASTEXITCODE }
+  $out = ''
+  $err = ''
+  if (Test-Path -LiteralPath $outFile) {
+    $out = [System.IO.File]::ReadAllText($outFile, $utf8NoBom)
   }
-  if ($psi.PSObject.Properties['StandardErrorEncoding']) {
-    $psi.StandardErrorEncoding = $utf8NoBom
+  if (Test-Path -LiteralPath $errFile) {
+    $err = [System.IO.File]::ReadAllText($errFile, $utf8NoBom)
   }
-  $p = New-Object System.Diagnostics.Process
-  $p.StartInfo = $psi
-  $null = $p.Start()
-  $outTask = $p.StandardOutput.ReadToEndAsync()
-  $errTask = $p.StandardError.ReadToEndAsync()
-  $bytes = [System.IO.File]::ReadAllBytes($in)
-  $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-  $p.StandardInput.BaseStream.Flush()
-  $p.StandardInput.Close()
-  if (-not $p.WaitForExit(30000)) { $p.Kill(); throw 'MCP process timed out' }
-  $out = $outTask.Result
-  $err = $errTask.Result
-  if ($p.ExitCode -ne 0) { throw "MCP exit $($p.ExitCode): $err" }
-  if ($err.Length -ne 0) { throw "MCP stderr not empty: $err" }
+  if ($code -ne 0) {
+    throw "MCP exit $code`n--- stdout ---`n$out`n--- stderr ---`n$err"
+  }
+  if ($err.Trim().Length -ne 0) {
+    throw "MCP stderr not empty:`n$err`n--- stdout ---`n$out"
+  }
   $responses = @($out -split "`r?`n" | Where-Object { $_ })
   if ($responses.Count -lt 3) {
-    throw "expected at least 3 responses, got $($responses.Count): $($responses -join ' | ')"
+    throw "expected at least 3 responses, got $($responses.Count)`n--- stdout ---`n$out"
   }
-  $byId = @{}
+  # String-match like scripts/mcp-smoke.sh — avoid PS 5.1 ConvertFrom-Json
+  # depth quirks on the tools/list schema payload.
+  $initLine = $null
+  $toolsLine = $null
+  $pingLine = $null
   foreach ($line in $responses) {
-    try {
-      $msg = $line | ConvertFrom-Json
-      if ($null -ne $msg.id) {
-        $byId[[string]$msg.id] = $msg
-      }
-    } catch {
-      # Keep raw lines for diagnostics below.
-    }
+    if ($line -match '"id"\s*:\s*1\b' -and -not $initLine) { $initLine = $line }
+    if ($line -match '"id"\s*:\s*2\b' -and -not $toolsLine) { $toolsLine = $line }
+    if ($line -match '"id"\s*:\s*3\b' -and -not $pingLine) { $pingLine = $line }
   }
-  if (-not $byId.ContainsKey('1')) {
-    throw "missing initialize response (id=1): $($responses -join ' | ')"
+  if (-not $initLine) { throw "missing initialize response (id=1)`n--- stdout ---`n$out" }
+  if ($initLine -notmatch '"protocolVersion"\s*:\s*"2024-11-05"') {
+    throw "protocol mismatch: $initLine"
   }
-  if ($responses[0] -notmatch '"protocolVersion"\s*:\s*"2024-11-05"' -and
-      (($byId['1'] | ConvertTo-Json -Compress) -notmatch '"protocolVersion"\s*:\s*"2024-11-05"')) {
-    throw "protocol mismatch: $($responses -join ' | ')"
+  if (-not $toolsLine) { throw "missing tools/list response (id=2)`n--- stdout ---`n$out" }
+  $toolNames = [regex]::Matches($toolsLine, '"name"\s*:')
+  if ($toolNames.Count -ne 10) {
+    throw "expected 10 tools, got $($toolNames.Count)`n--- tools line ---`n$toolsLine"
   }
-  if (-not $byId.ContainsKey('2')) {
-    throw "missing tools/list response (id=2): $($responses -join ' | ')"
-  }
-  $tools = $byId['2']
-  if (@($tools.result.tools).Count -ne 10) {
-    throw "expected 10 tools, got $(@($tools.result.tools).Count): $($responses -join ' | ')"
-  }
-  if (-not $byId.ContainsKey('3')) {
-    throw "missing ping response (id=3): $($responses -join ' | ')"
-  }
+  if (-not $pingLine) { throw "missing ping response (id=3)`n--- stdout ---`n$out" }
   Write-Host 'MCP smoke OK'
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

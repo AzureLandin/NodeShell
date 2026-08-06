@@ -99,7 +99,7 @@ func TestConnectHostConcurrentReserve(t *testing.T) {
 	}
 	// Wait until all max connects are in-flight (reserved) in the manager.
 	for i := 0; i < max; i++ {
-		<-m.connectStart
+		waitChan(t, m.connectStart, "connect start")
 	}
 	// A 9th concurrent connect must fail on the reserve, before any manager call.
 	if _, err := rt.ConnectHost(context.Background(), "h1", sessions.ConnectOptions{}); err == nil {
@@ -253,7 +253,7 @@ func TestReapIdleOnly(t *testing.T) {
 			t.Errorf("RunCommand: %v", err)
 		}
 	}()
-	<-m.execStart
+	waitChan(t, m.execStart, "exec start")
 
 	clk.advance(time.Minute) // exactly the idle timeout
 
@@ -270,7 +270,7 @@ func TestReapIdleOnly(t *testing.T) {
 		t.Fatalf("busy session must not be reaped, got %v", closed)
 	}
 	close(m.execBlock)
-	<-execDone
+	waitChan(t, execDone, "exec done")
 
 	// After the command finishes the session becomes idle; lastUsed was
 	// refreshed at operation end, so one more minute is needed.
@@ -367,14 +367,14 @@ func TestSftpOpsBumpBusy(t *testing.T) {
 			t.Errorf("SftpList: %v", err)
 		}
 	}()
-	<-blocked
+	waitChan(t, blocked, "sftp list start")
 
 	clk.advance(time.Minute)
 	if closed := rt.Reap(clk.now()); len(closed) != 0 {
 		t.Fatalf("session must not be reaped mid-sftp-operation, got %v", closed)
 	}
 	close(release)
-	<-done
+	waitChan(t, done, "sftp list done")
 }
 
 // blockingSFTP wraps a fakeSFTP and blocks List until release is closed.
@@ -615,7 +615,7 @@ func TestStartReaperDisposeAllRaceNoResurrect(t *testing.T) {
 		defer close(startDone)
 		rt.StartReaper(time.Hour)
 	}()
-	<-entered // StartReaper is parked right before the publish
+	waitChan(t, entered, "reaper publish hook")
 
 	disposeDone := make(chan struct{})
 	go func() {
@@ -633,7 +633,7 @@ func TestStartReaperDisposeAllRaceNoResurrect(t *testing.T) {
 	}
 
 	close(release) // let StartReaper publish
-	<-startDone
+	waitChan(t, startDone, "StartReaper return")
 	select {
 	case <-disposeDone:
 	case <-time.After(5 * time.Second):
@@ -674,7 +674,7 @@ func TestReapBeginTOCTOU(t *testing.T) {
 	}()
 	// The reaper has selected a and b and is blocked tearing down a (first
 	// in insertion order). b's metadata is still registered.
-	<-m.disconnectStart
+	waitChan(t, m.disconnectStart, "reaper disconnect start")
 
 	opDone := make(chan struct{})
 	var opErr error
@@ -688,10 +688,12 @@ func TestReapBeginTOCTOU(t *testing.T) {
 		t.Fatalf("op on %s reached the manager while the reaper had selected it", b)
 	case <-opDone:
 		// op rejected before the manager — the correct linearisation
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunCommand neither reached the manager nor returned")
 	}
 	close(m.disconnectBlock)
-	<-reapDone
-	<-opDone
+	waitChan(t, reapDone, "reap done")
+	waitChan(t, opDone, "op done")
 	assertErrorCode(t, opErr, apperror.SessionNotFound)
 	_ = a
 }
@@ -710,11 +712,11 @@ func TestDisposeAllDuringConnectNoResurrect(t *testing.T) {
 		defer close(connectDone)
 		_, connectErr = rt.ConnectHost(context.Background(), "h1", sessions.ConnectOptions{})
 	}()
-	<-m.connectStart // the connect is reserved and blocked in the manager
+	waitChan(t, m.connectStart, "connect start")
 
 	rt.DisposeAll()
 	close(m.connectBlock) // the in-flight connect now completes
-	<-connectDone
+	waitChan(t, connectDone, "connect done")
 
 	if connectErr == nil {
 		t.Fatalf("connect finishing after DisposeAll must fail")

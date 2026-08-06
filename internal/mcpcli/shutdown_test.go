@@ -33,8 +33,7 @@ func TestShutdownMCP(t *testing.T) {
 		defer close(connectDone)
 		_, connectErr = rt.ConnectHost(context.Background(), "h1", sessions.ConnectOptions{})
 	}()
-	<-m.connectStart // the connect is in flight and blocked
-
+	waitChan(t, m.connectStart, "connect start")
 	shutdownMCP(rt, m)
 
 	select {

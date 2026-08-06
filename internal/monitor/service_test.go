@@ -335,7 +335,11 @@ func TestClearEmitPrecedesConcurrentSwitch(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); svc.SetActive("", "") }() // A: clear
-	<-sink.clearLanded                                     // A's clear emit is in flight
+	select {
+	case <-sink.clearLanded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for clear emit")
+	}
 
 	// B switches to s2 while the clear emit has not returned.
 	wg.Add(1)
@@ -375,7 +379,11 @@ func TestDisposeAllWaitsForClearEmit(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); svc.SetActive("", "") }() // clear
-	<-sink.clearLanded
+	select {
+	case <-sink.clearLanded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for clear emit")
+	}
 
 	disposed := make(chan struct{})
 	go func() { svc.DisposeAll(); close(disposed) }()
@@ -474,7 +482,11 @@ func TestSwitchCancelsOldPollerAndNoOldEvents(t *testing.T) {
 	execer := newBlockingExecer()
 	svc := newTestService(t, execer, sink, time.Hour)
 	svc.SetActive("s1", "")
-	<-execer.landed // old poll is now blocked in exec
+	select {
+	case <-execer.landed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for poller exec")
+	}
 	// Switch away: must cancel + join the old poller before the new one runs.
 	start := time.Now()
 	svc.SetActive("s2", "")
@@ -499,7 +511,11 @@ func TestNoReentrantPoll(t *testing.T) {
 	execer := newBlockingExecer()
 	svc := newTestService(t, execer, sink, 5*time.Millisecond)
 	svc.SetActive("s1", "")
-	<-execer.landed
+	select {
+	case <-execer.landed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for poller exec")
+	}
 	// Let many ticker fires accumulate while the exec is stuck; only one poll
 	// may ever run at a time.
 	time.Sleep(40 * time.Millisecond)
@@ -561,7 +577,11 @@ func TestDisposeAllJoinsAndBlocksLaterSetActive(t *testing.T) {
 	execer := newBlockingExecer()
 	svc := newTestService(t, execer, sink, 5*time.Millisecond)
 	svc.SetActive("s1", "")
-	<-execer.landed
+	select {
+	case <-execer.landed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for poller exec")
+	}
 	start := time.Now()
 	svc.DisposeAll()
 	if time.Since(start) > 3*time.Second {
@@ -728,7 +748,11 @@ func TestConcurrentSetActiveNeverOrphansPoller(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); svc.SetActive("s2", "t2") }() // A
-	<-execer.firstExiting                                      // A has cancelled P1 and is parked in its join
+	select {
+	case <-execer.firstExiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for first exiting")
+	}
 
 	// Switch B moves to s3 while the gap is open. On the old implementation B
 	// passes beginSwitch (active == nil) and publishes P3; on the fixed one B

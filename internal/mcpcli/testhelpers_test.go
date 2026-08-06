@@ -34,6 +34,17 @@ func assertErrorCode(t *testing.T, err error, want string) {
 	}
 }
 
+// waitChan waits for a signal on ch or fails the test after 5s. Unbounded
+// receives hang the whole package until CI's per-package timeout.
+func waitChan(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timeout waiting for %s", what)
+	}
+}
+
 // --- fake host store ---
 
 type fakeHostStore struct {

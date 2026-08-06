@@ -118,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           # npm may drop Go sources under node_modules (e.g. flatted); never test those.
-          # Test packages one-by-one so a hung package is identifiable (4m cap each).
+          # Test packages one-by-one so a hung package is identifiable (90s cap each).
           tmp="$(mktemp)"
           go list ./... | grep -v '/node_modules/' >"$tmp" || true
           {
@@ -126,7 +126,7 @@ jobs:
             while IFS= read -r pkg || [ -n "$pkg" ]; do
               [ -z "$pkg" ] && continue
               echo "=== TEST $pkg ==="
-              if ! go test ${{ matrix.go-test-race }} -count=1 -timeout 4m -v "$pkg"; then
+              if ! go test ${{ matrix.go-test-race }} -count=1 -timeout 90s -v "$pkg"; then
                 echo "=== FAILED $pkg ==="
                 failed=1
                 break
@@ -178,7 +178,12 @@ jobs:
         run: codesign --force --sign - build/bin/nodeshell
 
       - name: MCP smoke test
-        run: ${{ matrix.smoke-cmd }} ${{ matrix.smoke-target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== build/bin ==="
+          ls -la build/bin || true
+          ${{ matrix.smoke-cmd }} ${{ matrix.smoke-target }}
 
       - name: Import Apple signing certificate
         if: matrix.platform == 'macos' && env.APPLE_DEVELOPER_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_CERT_BASE64 != '' && env.APPLE_CERT_PASSWORD != ''
