@@ -159,7 +159,12 @@ jobs:
 
       - name: Install NSIS
         if: matrix.platform == 'windows'
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          # Chocolatey updates the machine PATH, but the current Actions job
+          # does not inherit it. Expose makensis to subsequent steps explicitly.
+          "${env:ProgramFiles(x86)}\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install appimagetool and nfpm
         if: matrix.platform == 'linux'

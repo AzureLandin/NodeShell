@@ -252,7 +252,7 @@ func TestWithinHomeCaseContract(t *testing.T) {
 		}
 		return
 	}
-	if withinHome("/home/user/file.txt", "/home/user") {
+	if !withinHome("/home/user/file.txt", "/home/user") {
 		t.Fatal("withinHome must be case-sensitive outside Windows")
 	}
 	if withinHome("/home/USER/file.txt", "/home/user") {
