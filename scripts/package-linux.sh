@@ -52,5 +52,6 @@ contents:
     dst: /usr/share/icons/nodeshell.png
 EOF
 nfpm pkg --config "$out/nfpm.yaml" --packager deb --target "$out/$name.deb"
-nfpm pkg --config "$out/nfpm.yaml" --packager pacman --target "$out/$name.pkg.tar.zst"
+# nfpm v2 renamed the pacman packager to archlinux.
+nfpm pkg --config "$out/nfpm.yaml" --packager archlinux --target "$out/$name.pkg.tar.zst"
 echo "Packaged $name: $out/$name.AppImage $out/$name.deb $out/$name.pkg.tar.zst"
