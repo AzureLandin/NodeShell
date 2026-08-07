@@ -38,14 +38,16 @@ jobs:
             # packaging coverage matters more for auto-build right now.
             go-test-race: ''
             smoke-cmd: bash scripts/mcp-smoke.sh
-            smoke-target: build/bin/nodeshell
+            # Wails emits an .app bundle on darwin; the MCP binary lives inside.
+            smoke-target: build/bin/nodeshell.app/Contents/MacOS/nodeshell
             artifact-path: |
               build/bin/*.dmg
               build/bin/*.zip
               build/bin/nodeshell.app
           - platform: linux
             runner: ubuntu-latest
-            wails-args: -platform linux/amd64
+            # ubuntu-latest (24.04) ships webkit2gtk 4.1 only; Wails defaults to 4.0.
+            wails-args: -platform linux/amd64 -tags webkit2_41
             go-test-race: ''
             smoke-cmd: bash scripts/mcp-smoke.sh
             smoke-target: build/bin/nodeshell
@@ -180,7 +182,7 @@ jobs:
 
       - name: Ad-hoc sign macOS binary for smoke
         if: matrix.platform == 'macos'
-        run: codesign --force --sign - build/bin/nodeshell
+        run: codesign --force --sign - build/bin/nodeshell.app/Contents/MacOS/nodeshell
 
       - name: MCP smoke test
         shell: bash
