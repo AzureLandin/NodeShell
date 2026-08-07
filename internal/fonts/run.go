@@ -19,7 +19,10 @@ var errOutputExceeded = errors.New("fonts: output exceeded limit")
 func runCommand(ctx context.Context, limit int, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = procAttr()
-	cmd.Stderr = io.Discard
+	// Leave Stderr nil so os/exec connects it directly to the null device.
+	// Assigning io.Discard creates an internal pipe + copy goroutine; if the
+	// command starts children (for example a shell pipeline), descendants can
+	// inherit that pipe and keep Cmd.Wait blocked after the parent is killed.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

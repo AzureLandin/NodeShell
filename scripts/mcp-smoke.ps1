@@ -34,9 +34,11 @@ try {
   # -windowsconsole; cmd's < / > handles match how MCP clients spawn the binary.
   $exeFull = (Resolve-Path -LiteralPath $exe).Path
   $cmd = '"{0}" --mcp < "{1}" > "{2}" 2> "{3}"' -f $exeFull, $in, $outFile, $errFile
-  $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmd) -Wait -PassThru -NoNewWindow
-  $code = $p.ExitCode
-  if ($null -eq $code) { $code = $LASTEXITCODE }
+  # /d disables per-user/per-machine cmd AutoRun hooks. Those hooks can print
+  # text or fail before the target starts (and do exist on some runner images),
+  # corrupting an otherwise valid stdio smoke test.
+  & cmd.exe /d /s /c $cmd
+  $code = $LASTEXITCODE
   $out = ''
   $err = ''
   if (Test-Path -LiteralPath $outFile) {
