@@ -9,11 +9,13 @@ if [ -z "$version" ]; then
   version="$(node -p "require('./package.json').version" 2>/dev/null || echo '0.0.0')"
 fi
 appdir="$out/$name.AppDir"
+# appimagetool requires a .desktop (and matching icon) at the AppDir root;
+# also keep a copy under usr/share/applications for desktop integration / nfpm.
+desktop_root="$appdir/nodeshell.desktop"
 desktop="$appdir/usr/share/applications/nodeshell.desktop"
-mkdir -p "$appdir/usr/bin"
+mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications"
 cp "$bin" "$appdir/usr/bin/nodeshell"
-mkdir -p "$appdir/usr/share/applications"
-cat > "$desktop" <<EOF
+cat > "$desktop_root" <<EOF
 [Desktop Entry]
 Name=NodeShell
 Exec=nodeshell
@@ -21,7 +23,9 @@ Type=Application
 Icon=nodeshell
 Categories=Utility;
 EOF
+cp "$desktop_root" "$desktop"
 cp build/appicon.png "$appdir/nodeshell.png"
+ln -sfn nodeshell.png "$appdir/.DirIcon"
 cat > "$appdir/AppRun" <<EOF
 #!/usr/bin/env bash
 exec "\$(dirname "\$0")/usr/bin/nodeshell" "\$@"
