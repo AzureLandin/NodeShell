@@ -19,11 +19,12 @@ import (
 type ctxBlockSFTP struct {
 	inner SFTP
 
-	mu       sync.Mutex
-	released map[string]bool
-	blocked  map[string][]chan struct{}
-	disposed []string
-	in, out  int
+	mu          sync.Mutex
+	released    map[string]bool
+	blocked     map[string][]chan struct{}
+	disposed    []string
+	interrupted []string
+	in, out     int
 }
 
 func newCtxBlockSFTP(inner SFTP) *ctxBlockSFTP {
@@ -102,6 +103,23 @@ func (s *ctxBlockSFTP) Dispose(sessionID string) {
 	s.inner.Dispose(sessionID)
 }
 
+// Interrupt unblocks parked calls the same way closing a client would, but
+// does not Dispose the inner handle — guest cancel must leave GUI cwd intact.
+// released is set so the rest of the worker (e.g. List after Cwd) does not
+// park again on the now-closed client.
+func (s *ctxBlockSFTP) Interrupt(sessionID string) {
+	s.mu.Lock()
+	chans := s.blocked[sessionID]
+	s.blocked[sessionID] = nil
+	s.released[sessionID] = true
+	s.interrupted = append(s.interrupted, sessionID)
+	s.mu.Unlock()
+	for _, ch := range chans {
+		close(ch)
+	}
+	s.inner.Interrupt(sessionID)
+}
+
 func (s *ctxBlockSFTP) started() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,6 +136,17 @@ func (s *ctxBlockSFTP) disposedFor(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.disposed {
+		if id == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *ctxBlockSFTP) interruptedFor(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range s.interrupted {
 		if id == sessionID {
 			return true
 		}
@@ -191,5 +220,70 @@ func TestSftpToolsCancelUnblocksInFlight(t *testing.T) {
 			t.Fatalf("%s: session not reaped after the cancelled op (busy count stuck?): %v", tc.name, closed)
 		}
 		sid = connectOK(t, rt, "h1")
+	}
+}
+
+// TestGuestSftpCancelDoesNotDisposeGUIHandle: the in-app Agent shares the GUI
+// SFTP service. Cancelling a guest sftp_list/read/write must Interrupt the
+// cached client (so pkg/sftp unblocks) and must not Dispose the handle, or
+// the panel's cwd would snap back to remote home.
+func TestGuestSftpCancelDoesNotDisposeGUIHandle(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{"sftp_list", "sftp_list", map[string]any{"sessionId": "gui-1", "path": "apache2", "chdir": false}},
+		{"sftp_read", "sftp_read", map[string]any{"sessionId": "gui-1", "path": "syslog"}},
+		{"sftp_write", "sftp_write", map[string]any{"sessionId": "gui-1", "path": "out.txt", "content": "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFakeManager()
+			m.live["gui-1"] = true
+			inner := &fakeSFTP{cwd: "/var/log"}
+			block := newCtxBlockSFTP(inner)
+			rt := New(Deps{
+				Hosts:         newFakeHostStore(testHost("h1", "lab")),
+				Manager:       m,
+				SFTP:          block,
+				GuestSessions: true,
+			})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			callDone := make(chan struct{})
+			var callErr error
+			go func() {
+				defer close(callDone)
+				_, callErr = rt.Call(ctx, tc.tool, tc.args)
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			for block.started() == 0 {
+				if time.Now().After(deadline) {
+					t.Fatal("operation never started")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			cancel()
+			select {
+			case <-callDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Call did not return after the ctx was cancelled")
+			}
+			assertErrorCode(t, callErr, apperror.Cancelled)
+			if block.disposedFor("gui-1") || len(inner.disposed) != 0 {
+				t.Fatal("guest cancel must not Dispose the GUI SFTP handle")
+			}
+			if !block.interruptedFor("gui-1") {
+				t.Fatal("guest cancel must Interrupt the in-flight client")
+			}
+			if block.started() != block.finished() {
+				t.Fatalf("worker not joined: started %d finished %d", block.started(), block.finished())
+			}
+			cwd, err := inner.Cwd("gui-1")
+			if err != nil || cwd != "/var/log" {
+				t.Fatalf("cwd after guest cancel = %q (%v), want /var/log", cwd, err)
+			}
+		})
 	}
 }

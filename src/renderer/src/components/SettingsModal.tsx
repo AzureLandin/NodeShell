@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
+  AgentConfigStatus,
+  AgentProviderStatus,
   LanguageCode,
   McpManualConfig,
   McpRegistrationTargetStatus,
@@ -8,7 +10,6 @@ import type {
   PermissionPolicy,
   ThemePreference
 } from '../../../shared/types'
-import { AboutModal } from './AboutModal'
 import { ModalShell, useModalClose } from './ModalShell'
 import { Select } from './Select'
 
@@ -41,31 +42,99 @@ interface SettingsModalProps {
   onClose: () => void
 }
 
+type ProviderDraft = {
+  key: string
+  id: string
+  name: string
+  baseUrl: string
+  modelsText: string
+  apiKey: string
+  hasKey: boolean
+}
+
+let draftSeq = 0
+function nextDraftKey(): string {
+  draftSeq += 1
+  return `draft-${draftSeq}`
+}
+
+function draftsFromStatus(status: AgentConfigStatus): ProviderDraft[] {
+  return status.providers.map((p) => ({
+    key: p.id,
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl,
+    modelsText: p.models.join('\n'),
+    apiKey: '',
+    hasKey: p.hasKey
+  }))
+}
+
+function applyStatusToDrafts(prev: ProviderDraft[], status: AgentConfigStatus): ProviderDraft[] {
+  const byId = new Map(status.providers.map((p) => [p.id, p]))
+  const next: ProviderDraft[] = []
+  const seen = new Set<string>()
+  for (const draft of prev) {
+    if (!draft.id) {
+      next.push(draft)
+      continue
+    }
+    const p = byId.get(draft.id)
+    if (!p) continue
+    seen.add(p.id)
+    next.push({
+      ...draft,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      modelsText: p.models.join('\n'),
+      apiKey: '',
+      hasKey: p.hasKey
+    })
+  }
+  for (const p of status.providers) {
+    if (seen.has(p.id)) continue
+    next.push({
+      key: p.id,
+      id: p.id,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      modelsText: p.models.join('\n'),
+      apiKey: '',
+      hasKey: p.hasKey
+    })
+  }
+  return next
+}
+
 /**
- * Agent endpoint settings. The API key is write-only from here: the backend
- * stores it in the OS keyring and reports back only whether one exists, so the
- * renderer never holds the secret and the field starts empty on every open.
- * The section is skipped entirely when the running bridge has no agent.
+ * Agent provider settings. API keys are write-only: the backend stores them
+ * in the OS keyring and reports back only whether one exists, so the renderer
+ * never holds the secret and the field starts empty on every open. The
+ * section is skipped entirely when the running bridge has no agent.
  */
 function AgentSettingsSection(): React.JSX.Element | null {
   const { t } = useTranslation()
   const agent = window.api.agent
-  const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [configured, setConfigured] = useState(false)
+  const [drafts, setDrafts] = useState<ProviderDraft[]>([])
+  const [expanded, setExpanded] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [ready, setReady] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+
+  const patchDraft = (key: string, patch: Partial<ProviderDraft>): void => {
+    setDrafts((prev) => prev.map((d) => (d.key === key ? { ...d, ...patch } : d)))
+  }
+
+  const toggleExpanded = (key: string): void => {
+    setExpanded((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
+  }
 
   useEffect(() => {
     if (!agent) return
     void (async () => {
       try {
         const status = await agent.status()
-        setBaseUrl(status.baseUrl)
-        setModel(status.model)
-        setConfigured(status.configured)
+        setDrafts(draftsFromStatus(status))
       } catch (err) {
         setMessage(err instanceof Error ? err.message : String(err))
       } finally {
@@ -76,20 +145,25 @@ function AgentSettingsSection(): React.JSX.Element | null {
 
   if (!agent) return null
 
-  const save = async (): Promise<void> => {
+  const save = async (draft: ProviderDraft): Promise<void> => {
     setBusy(true)
     setMessage(null)
     try {
-      const status = await agent.setConfig({
-        baseUrl,
-        model,
-        // An untouched key field must not clear the stored key.
-        ...(apiKey === '' ? {} : { apiKey })
+      let status = await agent.upsertProvider({
+        ...(draft.id ? { id: draft.id } : {}),
+        name: draft.name,
+        baseUrl: draft.baseUrl,
+        models: draft.modelsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
       })
-      setBaseUrl(status.baseUrl)
-      setModel(status.model)
-      setConfigured(status.configured)
-      setApiKey('')
+      const saved =
+        draft.id !== ''
+          ? status.providers.find((p) => p.id === draft.id)
+          : newestProvider(status.providers, drafts)
+      if (draft.apiKey !== '' && saved) {
+        status = await agent.setProviderKey(saved.id, draft.apiKey)
+      }
+      setDrafts((prev) => applyStatusToDrafts(prev.filter((d) => d.key !== draft.key || d.id !== ''), status))
+      setExpanded((prev) => prev.filter((k) => k !== draft.key && k !== saved?.id))
       setMessage(t('settings.agentSaved'))
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -98,13 +172,13 @@ function AgentSettingsSection(): React.JSX.Element | null {
     }
   }
 
-  const clearKey = async (): Promise<void> => {
+  const clearKey = async (draft: ProviderDraft): Promise<void> => {
+    if (!draft.id) return
     setBusy(true)
     setMessage(null)
     try {
-      const status = await agent.setConfig({ apiKey: '' })
-      setConfigured(status.configured)
-      setApiKey('')
+      const status = await agent.setProviderKey(draft.id, '')
+      setDrafts((prev) => applyStatusToDrafts(prev, status))
       setMessage(t('settings.agentKeyCleared'))
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -113,65 +187,165 @@ function AgentSettingsSection(): React.JSX.Element | null {
     }
   }
 
+  const remove = async (draft: ProviderDraft): Promise<void> => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      if (!draft.id) {
+        setDrafts((prev) => prev.filter((d) => d.key !== draft.key))
+        setExpanded((prev) => prev.filter((k) => k !== draft.key))
+      } else {
+        const status = await agent.deleteProvider(draft.id)
+        setDrafts((prev) => applyStatusToDrafts(prev, status))
+        setExpanded((prev) => prev.filter((k) => k !== draft.key && k !== draft.id))
+        setMessage(t('settings.agentProviderDeleted'))
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addProvider = (): void => {
+    const key = nextDraftKey()
+    setDrafts((prev) => [
+      ...prev,
+      {
+        key,
+        id: '',
+        name: '',
+        baseUrl: '',
+        modelsText: '',
+        apiKey: '',
+        hasKey: false
+      }
+    ])
+    setExpanded((prev) => [...prev, key])
+  }
+
   return (
     <fieldset className="settings-section">
       <legend>{t('settings.agent')}</legend>
       <p className="settings-hint">{t('settings.agentHint')}</p>
 
-      <div className="form-field">
-        <span>{t('settings.agentBaseUrl')}</span>
-        <input
-          type="text"
-          value={baseUrl}
-          spellCheck={false}
-          aria-label={t('settings.agentBaseUrl')}
-          disabled={!ready || busy}
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-      </div>
-
-      <div className="form-field">
-        <span>{t('settings.agentModel')}</span>
-        <input
-          type="text"
-          value={model}
-          spellCheck={false}
-          aria-label={t('settings.agentModel')}
-          disabled={!ready || busy}
-          onChange={(e) => setModel(e.target.value)}
-        />
-      </div>
-
-      <div className="form-field">
-        <span>{t('settings.agentApiKey')}</span>
-        <input
-          type="password"
-          value={apiKey}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label={t('settings.agentApiKey')}
-          placeholder={configured ? t('settings.agentKeyStored') : t('settings.agentKeyMissing')}
-          disabled={!ready || busy}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-      </div>
+      {drafts.map((draft, index) => {
+        const open = expanded.includes(draft.key)
+        const title = draft.name.trim() || t('settings.agentNewProvider')
+        return (
+          <div
+            key={draft.key}
+            className={`agent-provider-card${open ? ' is-expanded' : ''}`}
+          >
+            <button
+              type="button"
+              className="agent-provider-card-toggle"
+              aria-expanded={open}
+              aria-label={title}
+              onClick={() => toggleExpanded(draft.key)}
+            >
+              <span
+                className={`agent-provider-card-title${draft.name.trim() ? '' : ' is-placeholder'}`}
+              >
+                {title}
+              </span>
+              <span className="agent-provider-card-chevron" aria-hidden="true" />
+            </button>
+            <div
+              className="agent-provider-card-collapse"
+              aria-hidden={!open}
+              inert={!open}
+            >
+              <div className="agent-provider-card-collapse-inner">
+              <div className="agent-provider-card-body">
+                <div className="form-field">
+                  <span>{t('settings.agentName')}</span>
+                  <input
+                    type="text"
+                    value={draft.name}
+                    spellCheck={false}
+                    aria-label={`${t('settings.agentName')} ${index + 1}`}
+                    disabled={!ready || busy}
+                    onChange={(e) => patchDraft(draft.key, { name: e.target.value })}
+                  />
+                </div>
+                <div className="form-field">
+                  <span>{t('settings.agentBaseUrl')}</span>
+                  <input
+                    type="text"
+                    value={draft.baseUrl}
+                    spellCheck={false}
+                    aria-label={`${t('settings.agentBaseUrl')} ${index + 1}`}
+                    disabled={!ready || busy}
+                    onChange={(e) => patchDraft(draft.key, { baseUrl: e.target.value })}
+                  />
+                </div>
+                <div className="form-field">
+                  <span>{t('settings.agentModels')}</span>
+                  <textarea
+                    value={draft.modelsText}
+                    spellCheck={false}
+                    rows={3}
+                    aria-label={`${t('settings.agentModels')} ${index + 1}`}
+                    disabled={!ready || busy}
+                    onChange={(e) => patchDraft(draft.key, { modelsText: e.target.value })}
+                  />
+                  <p className="settings-hint">{t('settings.agentModelsHint')}</p>
+                </div>
+                <div className="form-field">
+                  <span>{t('settings.agentApiKey')}</span>
+                  <input
+                    type="password"
+                    value={draft.apiKey}
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label={`${t('settings.agentApiKey')} ${index + 1}`}
+                    placeholder={draft.hasKey ? t('settings.agentKeyStored') : t('settings.agentKeyMissing')}
+                    disabled={!ready || busy}
+                    onChange={(e) => patchDraft(draft.key, { apiKey: e.target.value })}
+                  />
+                </div>
+                <div className="mcp-register-actions">
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={!ready || busy}
+                    onClick={() => void save(draft)}
+                  >
+                    {t('settings.agentSave')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    disabled={!ready || busy || !draft.id || !draft.hasKey}
+                    onClick={() => void clearKey(draft)}
+                  >
+                    {t('settings.agentClearKey')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    disabled={!ready || busy}
+                    onClick={() => void remove(draft)}
+                  >
+                    {t('settings.agentDeleteProvider')}
+                  </button>
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+        )
+      })}
 
       <div className="mcp-register-actions">
         <button
           type="button"
-          className="btn-primary btn-sm"
-          disabled={!ready || busy}
-          onClick={() => void save()}
-        >
-          {t('settings.agentSave')}
-        </button>
-        <button
-          type="button"
           className="btn-secondary btn-sm"
-          disabled={!ready || busy || !configured}
-          onClick={() => void clearKey()}
+          disabled={!ready || busy}
+          onClick={addProvider}
         >
-          {t('settings.agentClearKey')}
+          {t('settings.agentAddProvider')}
         </button>
       </div>
       {message && <p className="mcp-register-message">{message}</p>}
@@ -179,26 +353,174 @@ function AgentSettingsSection(): React.JSX.Element | null {
   )
 }
 
-function SettingsModalBody({
+function newestProvider(
+  providers: AgentProviderStatus[],
+  drafts: ProviderDraft[]
+): AgentProviderStatus | undefined {
+  const known = new Set(drafts.map((d) => d.id).filter(Boolean))
+  return providers.find((p) => !known.has(p.id)) ?? providers[providers.length - 1]
+}
+
+type SettingsPage = 'index' | 'general' | 'agent' | 'mcp'
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function capSettingsHeight(shell: HTMLElement, natural: number): number {
+  const modal = shell.closest('.modal')
+  if (!(modal instanceof HTMLElement)) return natural
+  const maxModal = Math.min(window.innerHeight * 0.9, 720)
+  const cs = getComputedStyle(modal)
+  const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+  const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
+  return Math.min(natural, Math.max(0, maxModal - pad - border))
+}
+
+function GeneralSettingsSection({
   language,
   themePreference,
   terminalFontFamily,
   terminalFontSize,
-  mcpIdleTimeoutMinutes,
-  mcpMaxSessions,
   permissionPolicy,
   onLanguageChange,
   onThemePreferenceChange,
   onTerminalFontFamilyChange,
   onTerminalFontSizeChange,
-  onMcpIdleTimeoutMinutesChange,
-  onMcpMaxSessionsChange,
-  onPermissionPolicyChange,
-  onOpenAbout
-}: Omit<SettingsModalProps, 'onClose'> & { onOpenAbout: () => void }): React.JSX.Element {
+  onPermissionPolicyChange
+}: Pick<
+  SettingsModalProps,
+  | 'language'
+  | 'themePreference'
+  | 'terminalFontFamily'
+  | 'terminalFontSize'
+  | 'permissionPolicy'
+  | 'onLanguageChange'
+  | 'onThemePreferenceChange'
+  | 'onTerminalFontFamilyChange'
+  | 'onTerminalFontSizeChange'
+  | 'onPermissionPolicyChange'
+>): React.JSX.Element {
   const { t } = useTranslation()
-  const requestClose = useModalClose()
   const [fonts, setFonts] = useState<string[]>([])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await window.api.fonts.list()
+        setFonts(list)
+      } catch {
+        setFonts([])
+      }
+    })()
+  }, [])
+
+  const fontOptions =
+    fonts.includes(terminalFontFamily) || !terminalFontFamily
+      ? fonts
+      : [terminalFontFamily, ...fonts]
+  const fontSelectOptions =
+    fontOptions.length === 0 && terminalFontFamily
+      ? [{ value: terminalFontFamily, label: terminalFontFamily }]
+      : fontOptions.map((name) => ({ value: name, label: name }))
+  const fontSize = Math.min(24, Math.max(10, Math.round(terminalFontSize) || 14))
+  const fontSizeOptions = Array.from({ length: 15 }, (_, i) => {
+    const size = 10 + i
+    return { value: String(size), label: String(size) }
+  })
+
+  return (
+    <div className="settings-page">
+      <div className="form-field">
+        <span>{t('common.language')}</span>
+        <Select
+          value={language}
+          onChange={(v) => onLanguageChange(v as LanguageCode)}
+          aria-label={t('common.language')}
+          options={[
+            { value: 'zh', label: '中文' },
+            { value: 'en', label: 'English' }
+          ]}
+        />
+      </div>
+
+      <fieldset className="settings-section">
+        <legend>{t('settings.appearance')}</legend>
+        <div className="form-field">
+          <span>{t('settings.theme')}</span>
+          <Select
+            value={themePreference}
+            onChange={(v) => onThemePreferenceChange(v as ThemePreference)}
+            aria-label={t('settings.theme')}
+            options={[
+              { value: 'system', label: t('settings.themeSystem') },
+              { value: 'light', label: t('settings.themeLight') },
+              { value: 'dark', label: t('settings.themeDark') }
+            ]}
+          />
+        </div>
+      </fieldset>
+
+      <fieldset className="settings-section">
+        <legend>{t('settings.terminal')}</legend>
+        <div className="form-field">
+          <span>{t('settings.fontFamily')}</span>
+          <Select
+            value={terminalFontFamily}
+            onChange={onTerminalFontFamilyChange}
+            aria-label={t('settings.fontFamily')}
+            options={fontSelectOptions}
+          />
+        </div>
+        <div className="form-field">
+          <span>{t('settings.fontSize')}</span>
+          <Select
+            value={String(fontSize)}
+            onChange={(v) => {
+              const n = Number(v)
+              if (!Number.isFinite(n)) return
+              onTerminalFontSizeChange(n)
+            }}
+            aria-label={t('settings.fontSize')}
+            options={fontSizeOptions}
+          />
+        </div>
+      </fieldset>
+
+      <fieldset className="settings-section">
+        <legend>{t('settings.permissions')}</legend>
+        <p className="settings-hint">{t('settings.permissionsHint')}</p>
+        <div className="form-field">
+          <span>{t('settings.permissionPolicy')}</span>
+          <Select
+            value={permissionPolicy}
+            onChange={(v) => onPermissionPolicyChange(v as PermissionPolicy)}
+            aria-label={t('settings.permissionPolicy')}
+            options={[
+              { value: 'ask', label: t('settings.permissionAsk') },
+              { value: 'allow', label: t('settings.permissionAllow') },
+              { value: 'deny', label: t('settings.permissionDeny') }
+            ]}
+          />
+        </div>
+      </fieldset>
+    </div>
+  )
+}
+
+function McpSettingsSection({
+  mcpIdleTimeoutMinutes,
+  mcpMaxSessions,
+  onMcpIdleTimeoutMinutesChange,
+  onMcpMaxSessionsChange
+}: Pick<
+  SettingsModalProps,
+  | 'mcpIdleTimeoutMinutes'
+  | 'mcpMaxSessions'
+  | 'onMcpIdleTimeoutMinutesChange'
+  | 'onMcpMaxSessionsChange'
+>): React.JSX.Element {
+  const { t } = useTranslation()
   const [mcpTargets, setMcpTargets] = useState<McpRegistrationTargetStatus[]>([])
   const [mcpManual, setMcpManual] = useState<McpManualConfig | null>(null)
   const [mcpFormat, setMcpFormat] = useState<McpSnippetFormat>('standard')
@@ -226,14 +548,6 @@ function SettingsModalBody({
   }
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const list = await window.api.fonts.list()
-        setFonts(list)
-      } catch {
-        setFonts([])
-      }
-    })()
     void refreshMcpStatus()
     void refreshMcpManual()
   }, [])
@@ -270,33 +584,6 @@ function SettingsModalBody({
     }
   }
 
-  const copyMcpSnippet = async (): Promise<void> => {
-    const text = mcpManual?.snippets[mcpFormat]
-    if (!text) return
-    await copyText(text, 'settings.mcpCopyOk')
-  }
-
-  const copyMcpCommand = async (): Promise<void> => {
-    if (!mcpManual) return
-    await copyText(formatMcpLaunchCommand(mcpManual.command, mcpManual.args), 'settings.mcpCopyCommandOk')
-  }
-
-  const fontOptions =
-    fonts.includes(terminalFontFamily) || !terminalFontFamily
-      ? fonts
-      : [terminalFontFamily, ...fonts]
-
-  const fontSelectOptions =
-    fontOptions.length === 0 && terminalFontFamily
-      ? [{ value: terminalFontFamily, label: terminalFontFamily }]
-      : fontOptions.map((name) => ({ value: name, label: name }))
-
-  const fontSize = Math.min(24, Math.max(10, Math.round(terminalFontSize) || 14))
-  const fontSizeOptions = Array.from({ length: 15 }, (_, i) => {
-    const size = 10 + i
-    return { value: String(size), label: String(size) }
-  })
-
   const idleOptions = [1, 5, 10, 15, 30, 60, 120].map((n) => ({
     value: String(n),
     label: String(n)
@@ -305,7 +592,6 @@ function SettingsModalBody({
     value: String(n),
     label: String(n)
   }))
-
   const idleValue = String(
     [1, 5, 10, 15, 30, 60, 120].includes(mcpIdleTimeoutMinutes)
       ? mcpIdleTimeoutMinutes
@@ -315,7 +601,6 @@ function SettingsModalBody({
     idleOptions.push({ value: idleValue, label: idleValue })
     idleOptions.sort((a, b) => Number(a.value) - Number(b.value))
   }
-
   const maxValue = String(
     [1, 2, 4, 8, 16, 32].includes(mcpMaxSessions)
       ? mcpMaxSessions
@@ -327,10 +612,266 @@ function SettingsModalBody({
   }
 
   return (
-    <>
+    <div className="settings-page">
+      <fieldset className="settings-section settings-section--mcp">
+        <p className="settings-hint">{t('settings.mcpHint')}</p>
+        <div className="settings-mcp-options">
+          <div className="form-field">
+            <span>{t('settings.mcpIdleTimeout')}</span>
+            <Select
+              value={idleValue}
+              onChange={(v) => {
+                const n = Number(v)
+                if (!Number.isFinite(n)) return
+                onMcpIdleTimeoutMinutesChange(n)
+              }}
+              aria-label={t('settings.mcpIdleTimeout')}
+              options={idleOptions}
+            />
+          </div>
+          <div className="form-field">
+            <span>{t('settings.mcpMaxSessions')}</span>
+            <Select
+              value={maxValue}
+              onChange={(v) => {
+                const n = Number(v)
+                if (!Number.isFinite(n)) return
+                onMcpMaxSessionsChange(n)
+              }}
+              aria-label={t('settings.mcpMaxSessions')}
+              options={maxSessionOptions}
+            />
+          </div>
+        </div>
+
+        <div className="mcp-register-block">
+          <div className="mcp-register-title">{t('settings.mcpRegisterTitle')}</div>
+          <p className="settings-hint">{t('settings.mcpRegisterHint')}</p>
+          <div className="mcp-register-actions">
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              disabled={mcpBusy}
+              onClick={() => void registerMcp('all')}
+            >
+              {t('settings.mcpRegisterAll')}
+            </button>
+          </div>
+          <ul className="mcp-register-list">
+            {mcpTargets.map((row) => {
+              const statusLabel = row.registered
+                ? t('settings.mcpStatusRegistered')
+                : row.stale
+                  ? t('settings.mcpStatusStale')
+                  : t('settings.mcpStatusMissing')
+              return (
+                <li key={row.id} className="mcp-register-row">
+                  <div className="mcp-register-meta">
+                    <span className="mcp-register-name">{row.label}</span>
+                    {row.configPath ? (
+                      <span className="mcp-register-path" title={row.configPath}>
+                        {row.configPath}
+                      </span>
+                    ) : null}
+                    <span
+                      className={`mcp-register-status${row.registered ? ' is-ok' : row.stale ? ' is-stale' : ''}`}
+                    >
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    disabled={mcpBusy}
+                    onClick={() => void registerMcp(row.id)}
+                  >
+                    {row.registered ? t('settings.mcpUpdate') : t('settings.mcpRegister')}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+
+        <div className="mcp-register-block">
+          <div className="mcp-register-title">{t('settings.mcpOtherTitle')}</div>
+          <p className="settings-hint">{t('settings.mcpOtherHint')}</p>
+          <div className="mcp-launch-row">
+            <label className="mcp-launch-field">
+              <span>{t('settings.mcpLaunchCommand')}</span>
+              <input
+                type="text"
+                readOnly
+                className="mcp-launch-input"
+                aria-label={t('settings.mcpLaunchCommand')}
+                value={
+                  mcpManual ? formatMcpLaunchCommand(mcpManual.command, mcpManual.args) : ''
+                }
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={mcpBusy || !mcpManual}
+              onClick={() => {
+                if (!mcpManual) return
+                void copyText(
+                  formatMcpLaunchCommand(mcpManual.command, mcpManual.args),
+                  'settings.mcpCopyCommandOk'
+                )
+              }}
+            >
+              {t('settings.mcpCopyCommand')}
+            </button>
+          </div>
+          <div className="mcp-format-tabs" role="tablist" aria-label={t('settings.mcpSnippetFormat')}>
+            {MCP_SNIPPET_FORMATS.map((format) => (
+              <button
+                key={format}
+                type="button"
+                role="tab"
+                aria-selected={mcpFormat === format}
+                className={`mcp-format-tab${mcpFormat === format ? ' is-active' : ''}`}
+                onClick={() => setMcpFormat(format)}
+              >
+                {t(`settings.mcpFormat.${format}`)}
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="mcp-snippet-preview"
+            readOnly
+            spellCheck={false}
+            aria-label={t('settings.mcpSnippetPreview')}
+            value={mcpManual?.snippets[mcpFormat] ?? ''}
+          />
+          <div className="mcp-register-actions">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={mcpBusy || !mcpManual?.snippets[mcpFormat]}
+              onClick={() => {
+                const text = mcpManual?.snippets[mcpFormat]
+                if (text) void copyText(text, 'settings.mcpCopyOk')
+              }}
+            >
+              {t('settings.mcpCopyConfig')}
+            </button>
+          </div>
+          <div className="mcp-paste-locations">
+            <div className="mcp-paste-title">{t('settings.mcpPasteLocations')}</div>
+            <ul>
+              <li>{t('settings.mcpPasteClaudeDesktop')}</li>
+              <li>{t('settings.mcpPasteVscode')}</li>
+              <li>{t('settings.mcpPasteWindsurf')}</li>
+            </ul>
+          </div>
+          {mcpMessage && <p className="mcp-register-message">{mcpMessage}</p>}
+        </div>
+      </fieldset>
+    </div>
+  )
+}
+
+function SettingsModalBody({
+  language,
+  themePreference,
+  terminalFontFamily,
+  terminalFontSize,
+  mcpIdleTimeoutMinutes,
+  mcpMaxSessions,
+  permissionPolicy,
+  onLanguageChange,
+  onThemePreferenceChange,
+  onTerminalFontFamilyChange,
+  onTerminalFontSizeChange,
+  onMcpIdleTimeoutMinutesChange,
+  onMcpMaxSessionsChange,
+  onPermissionPolicyChange
+}: Omit<SettingsModalProps, 'onClose'>): React.JSX.Element {
+  const { t } = useTranslation()
+  const requestClose = useModalClose()
+  const shellRef = useRef<HTMLDivElement>(null)
+  const [page, setPage] = useState<SettingsPage>('index')
+  const [frameHeight, setFrameHeight] = useState<number | null>(null)
+  const [resizing, setResizing] = useState(false)
+
+  const navigate = (next: SettingsPage): void => {
+    if (next === page) return
+    const from = shellRef.current?.offsetHeight ?? 0
+    if (!prefersReducedMotion() && from > 0) {
+      setResizing(false)
+      setFrameHeight(from)
+    } else {
+      setResizing(false)
+      setFrameHeight(null)
+    }
+    setPage(next)
+  }
+
+  useLayoutEffect(() => {
+    const shell = shellRef.current
+    if (!shell || frameHeight == null || resizing) return
+    const prevHeight = shell.style.height
+    shell.style.height = 'auto'
+    const to = capSettingsHeight(shell, shell.offsetHeight)
+    shell.style.height = prevHeight
+    if (Math.abs(to - frameHeight) < 1) {
+      setFrameHeight(null)
+      return
+    }
+    const id = window.requestAnimationFrame(() => {
+      setResizing(true)
+      setFrameHeight(to)
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [page, frameHeight, resizing])
+
+  const onFrameTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>): void => {
+    if (e.target !== e.currentTarget) return
+    if (e.propertyName !== 'height') return
+    setResizing(false)
+    setFrameHeight(null)
+  }
+
+  const title =
+    page === 'general'
+      ? t('settings.navGeneral')
+      : page === 'agent'
+        ? t('settings.navAgent')
+        : page === 'mcp'
+          ? t('settings.navMcp')
+          : t('settings.title')
+
+  return (
+    <div
+      ref={shellRef}
+      className={`settings-shell${resizing ? ' is-resizing' : ''}`}
+      style={frameHeight != null ? { height: frameHeight } : undefined}
+      onTransitionEnd={onFrameTransitionEnd}
+    >
       <div className="settings-modal-header">
+        {page !== 'index' ? (
+          <button
+            type="button"
+            className="settings-modal-back"
+            aria-label={t('settings.back')}
+            onClick={() => navigate('index')}
+          >
+            <svg className="settings-modal-back-icon" viewBox="0 0 8 12" aria-hidden="true">
+              <path
+                d="M6.25 1.5L1.75 6L6.25 10.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
         <h3 id="settings-modal-title" className="modal-title">
-          {t('settings.title')}
+          {title}
         </h3>
         <button
           type="button"
@@ -342,273 +883,80 @@ function SettingsModalBody({
         </button>
       </div>
 
-      <div className="settings-modules">
-        <div className="settings-modules-main">
-          <div className="form-field">
-            <span>{t('common.language')}</span>
-            <Select
-              value={language}
-              onChange={(v) => onLanguageChange(v as LanguageCode)}
-              aria-label={t('common.language')}
-              options={[
-                { value: 'zh', label: '中文' },
-                { value: 'en', label: 'English' }
-              ]}
-            />
-          </div>
-
-          <fieldset className="settings-section">
-            <legend>{t('settings.appearance')}</legend>
-            <div className="form-field">
-              <span>{t('settings.theme')}</span>
-              <Select
-                value={themePreference}
-                onChange={(v) => onThemePreferenceChange(v as ThemePreference)}
-                aria-label={t('settings.theme')}
-                options={[
-                  { value: 'system', label: t('settings.themeSystem') },
-                  { value: 'light', label: t('settings.themeLight') },
-                  { value: 'dark', label: t('settings.themeDark') }
-                ]}
-              />
-            </div>
-          </fieldset>
-
-          <fieldset className="settings-section">
-            <legend>{t('settings.terminal')}</legend>
-
-            <div className="form-field">
-              <span>{t('settings.fontFamily')}</span>
-              <Select
-                value={terminalFontFamily}
-                onChange={onTerminalFontFamilyChange}
-                aria-label={t('settings.fontFamily')}
-                options={fontSelectOptions}
-              />
-            </div>
-
-            <div className="form-field">
-              <span>{t('settings.fontSize')}</span>
-              <Select
-                value={String(fontSize)}
-                onChange={(v) => {
-                  const n = Number(v)
-                  if (!Number.isFinite(n)) return
-                  onTerminalFontSizeChange(n)
-                }}
-                aria-label={t('settings.fontSize')}
-                options={fontSizeOptions}
-              />
-            </div>
-          </fieldset>
-
+      {page === 'index' ? (
+        <nav className="settings-nav" aria-label={t('settings.title')}>
+          <button
+            type="button"
+            className="settings-nav-row"
+            aria-label={t('settings.navGeneral')}
+            onClick={() => navigate('general')}
+          >
+            <span className="settings-nav-copy">
+              <span className="settings-nav-title">{t('settings.navGeneral')}</span>
+              <span className="settings-nav-hint">{t('settings.navGeneralHint')}</span>
+            </span>
+            <span className="settings-nav-chevron" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="settings-nav-row"
+            aria-label={t('settings.navAgent')}
+            onClick={() => navigate('agent')}
+          >
+            <span className="settings-nav-copy">
+              <span className="settings-nav-title">{t('settings.navAgent')}</span>
+              <span className="settings-nav-hint">{t('settings.navAgentHint')}</span>
+            </span>
+            <span className="settings-nav-chevron" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="settings-nav-row"
+            aria-label={t('settings.navMcp')}
+            onClick={() => navigate('mcp')}
+          >
+            <span className="settings-nav-copy">
+              <span className="settings-nav-title">{t('settings.navMcp')}</span>
+              <span className="settings-nav-hint">{t('settings.navMcpHint')}</span>
+            </span>
+            <span className="settings-nav-chevron" aria-hidden="true" />
+          </button>
+        </nav>
+      ) : page === 'general' ? (
+        <GeneralSettingsSection
+          language={language}
+          themePreference={themePreference}
+          terminalFontFamily={terminalFontFamily}
+          terminalFontSize={terminalFontSize}
+          permissionPolicy={permissionPolicy}
+          onLanguageChange={onLanguageChange}
+          onThemePreferenceChange={onThemePreferenceChange}
+          onTerminalFontFamilyChange={onTerminalFontFamilyChange}
+          onTerminalFontSizeChange={onTerminalFontSizeChange}
+          onPermissionPolicyChange={onPermissionPolicyChange}
+        />
+      ) : page === 'agent' ? (
+        <div className="settings-page">
           <AgentSettingsSection />
-
-          <fieldset className="settings-section">
-            <legend>{t('settings.permissions')}</legend>
-            <p className="settings-hint">{t('settings.permissionsHint')}</p>
-            <div className="form-field">
-              <span>{t('settings.permissionPolicy')}</span>
-              <Select
-                value={permissionPolicy}
-                onChange={(v) => onPermissionPolicyChange(v as PermissionPolicy)}
-                aria-label={t('settings.permissionPolicy')}
-                options={[
-                  { value: 'ask', label: t('settings.permissionAsk') },
-                  { value: 'allow', label: t('settings.permissionAllow') },
-                  { value: 'deny', label: t('settings.permissionDeny') }
-                ]}
-              />
-            </div>
-          </fieldset>
         </div>
-
-        <fieldset className="settings-section settings-section--mcp">
-          <legend>{t('settings.mcp')}</legend>
-          <p className="settings-hint">{t('settings.mcpHint')}</p>
-
-          <div className="settings-mcp-options">
-            <div className="form-field">
-              <span>{t('settings.mcpIdleTimeout')}</span>
-              <Select
-                value={idleValue}
-                onChange={(v) => {
-                  const n = Number(v)
-                  if (!Number.isFinite(n)) return
-                  onMcpIdleTimeoutMinutesChange(n)
-                }}
-                aria-label={t('settings.mcpIdleTimeout')}
-                options={idleOptions}
-              />
-            </div>
-
-            <div className="form-field">
-              <span>{t('settings.mcpMaxSessions')}</span>
-              <Select
-                value={maxValue}
-                onChange={(v) => {
-                  const n = Number(v)
-                  if (!Number.isFinite(n)) return
-                  onMcpMaxSessionsChange(n)
-                }}
-                aria-label={t('settings.mcpMaxSessions')}
-                options={maxSessionOptions}
-              />
-            </div>
-          </div>
-
-          <div className="mcp-register-block">
-            <div className="mcp-register-title">{t('settings.mcpRegisterTitle')}</div>
-            <p className="settings-hint">{t('settings.mcpRegisterHint')}</p>
-            <div className="mcp-register-actions">
-              <button
-                type="button"
-                className="btn-primary btn-sm"
-                disabled={mcpBusy}
-                onClick={() => void registerMcp('all')}
-              >
-                {t('settings.mcpRegisterAll')}
-              </button>
-            </div>
-            <ul className="mcp-register-list">
-              {mcpTargets.map((row) => {
-                const statusLabel = row.registered
-                  ? t('settings.mcpStatusRegistered')
-                  : row.stale
-                    ? t('settings.mcpStatusStale')
-                    : t('settings.mcpStatusMissing')
-                return (
-                  <li key={row.id} className="mcp-register-row">
-                    <div className="mcp-register-meta">
-                      <span className="mcp-register-name">{row.label}</span>
-                      {row.configPath ? (
-                        <span className="mcp-register-path" title={row.configPath}>
-                          {row.configPath}
-                        </span>
-                      ) : null}
-                      <span
-                        className={`mcp-register-status${row.registered ? ' is-ok' : row.stale ? ' is-stale' : ''}`}
-                      >
-                        {statusLabel}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn-secondary btn-sm"
-                      disabled={mcpBusy}
-                      onClick={() => void registerMcp(row.id)}
-                    >
-                      {row.registered ? t('settings.mcpUpdate') : t('settings.mcpRegister')}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-
-          <div className="mcp-register-block">
-            <div className="mcp-register-title">{t('settings.mcpOtherTitle')}</div>
-            <p className="settings-hint">{t('settings.mcpOtherHint')}</p>
-            <div className="mcp-launch-row">
-              <label className="mcp-launch-field">
-                <span>{t('settings.mcpLaunchCommand')}</span>
-                <input
-                  type="text"
-                  readOnly
-                  className="mcp-launch-input"
-                  aria-label={t('settings.mcpLaunchCommand')}
-                  value={
-                    mcpManual
-                      ? formatMcpLaunchCommand(mcpManual.command, mcpManual.args)
-                      : ''
-                  }
-                />
-              </label>
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                disabled={mcpBusy || !mcpManual}
-                onClick={() => void copyMcpCommand()}
-              >
-                {t('settings.mcpCopyCommand')}
-              </button>
-            </div>
-            <div
-              className="mcp-format-tabs"
-              role="tablist"
-              aria-label={t('settings.mcpSnippetFormat')}
-            >
-              {MCP_SNIPPET_FORMATS.map((format) => (
-                <button
-                  key={format}
-                  type="button"
-                  role="tab"
-                  aria-selected={mcpFormat === format}
-                  className={`mcp-format-tab${mcpFormat === format ? ' is-active' : ''}`}
-                  onClick={() => setMcpFormat(format)}
-                >
-                  {t(`settings.mcpFormat.${format}`)}
-                </button>
-              ))}
-            </div>
-            <textarea
-              className="mcp-snippet-preview"
-              readOnly
-              spellCheck={false}
-              aria-label={t('settings.mcpSnippetPreview')}
-              value={mcpManual?.snippets[mcpFormat] ?? ''}
-            />
-            <div className="mcp-register-actions">
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                disabled={mcpBusy || !mcpManual?.snippets[mcpFormat]}
-                onClick={() => void copyMcpSnippet()}
-              >
-                {t('settings.mcpCopyConfig')}
-              </button>
-            </div>
-            <div className="mcp-paste-locations">
-              <div className="mcp-paste-title">{t('settings.mcpPasteLocations')}</div>
-              <ul>
-                <li>{t('settings.mcpPasteClaudeDesktop')}</li>
-                <li>{t('settings.mcpPasteVscode')}</li>
-                <li>{t('settings.mcpPasteWindsurf')}</li>
-              </ul>
-            </div>
-            {mcpMessage && <p className="mcp-register-message">{mcpMessage}</p>}
-          </div>
-        </fieldset>
-      </div>
-
-      <div className="form-actions">
-        <button type="button" className="btn-secondary" onClick={onOpenAbout}>
-          {t('about.open')}
-        </button>
-        <button type="button" className="btn-primary" onClick={requestClose}>
-          {t('common.dismiss')}
-        </button>
-      </div>
-    </>
+      ) : (
+        <McpSettingsSection
+          mcpIdleTimeoutMinutes={mcpIdleTimeoutMinutes}
+          mcpMaxSessions={mcpMaxSessions}
+          onMcpIdleTimeoutMinutesChange={onMcpIdleTimeoutMinutesChange}
+          onMcpMaxSessionsChange={onMcpMaxSessionsChange}
+        />
+      )}
+    </div>
   )
 }
 
 export function SettingsModal(props: SettingsModalProps): React.JSX.Element {
   const { onClose, ...bodyProps } = props
-  const [showAbout, setShowAbout] = useState(false)
-
-  if (showAbout) {
-    return (
-      <AboutModal
-        onClose={onClose}
-        onBack={() => setShowAbout(false)}
-      />
-    )
-  }
 
   return (
     <ModalShell onClose={onClose} dialogClassName="settings-modal" labelledBy="settings-modal-title">
-      <SettingsModalBody {...bodyProps} onOpenAbout={() => setShowAbout(true)} />
+      <SettingsModalBody {...bodyProps} />
     </ModalShell>
   )
 }

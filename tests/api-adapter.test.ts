@@ -107,8 +107,16 @@ describe('api adapter shape', () => {
     expect(typeof api.monitor.setActive).toBe('function')
     expect(typeof api.monitor.onUpdate).toBe('function')
 
+    expect(typeof api.tunnels.discover).toBe('function')
+    expect(typeof api.tunnels.start).toBe('function')
+    expect(typeof api.tunnels.stop).toBe('function')
+    expect(typeof api.tunnels.list).toBe('function')
+
     expect(typeof api.agent!.status).toBe('function')
-    expect(typeof api.agent!.setConfig).toBe('function')
+    expect(typeof api.agent!.upsertProvider).toBe('function')
+    expect(typeof api.agent!.deleteProvider).toBe('function')
+    expect(typeof api.agent!.setProviderKey).toBe('function')
+    expect(typeof api.agent!.setDefaultModel).toBe('function')
     expect(typeof api.agent!.prompt).toBe('function')
     expect(typeof api.agent!.abort).toBe('function')
     expect(typeof api.agent!.clear).toBe('function')
@@ -241,18 +249,45 @@ describe('api adapter binding dispatch', () => {
     await api.monitor.setActive('s1', 't')
     expect(bridge.calls.at(-1)).toEqual({ method: 'MonitorSetActive', args: ['s1', 't'] })
 
-    const agentStatus = { configured: true, baseUrl: 'https://x.test/v1', model: 'm' }
+    await api.tunnels.discover('s1')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'TunnelsDiscover', args: ['s1'] })
+    await api.tunnels.start('s1', '0.0.0.0', 8080)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'TunnelsStart', args: ['s1', '0.0.0.0', 8080] })
+    await api.tunnels.stop('s1', 'tun-1')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'TunnelsStop', args: ['s1', 'tun-1'] })
+    await api.tunnels.list('s1')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'TunnelsList', args: ['s1'] })
+
+    const agentStatus = {
+      configured: true,
+      providers: [
+        { id: 'p1', name: 'P', baseUrl: 'https://x.test/v1', models: ['m'], hasKey: true }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'm'
+    }
     bridge.setResult(agentStatus)
     await expect(api.agent!.status()).resolves.toEqual(agentStatus)
     expect(bridge.calls.at(-1)).toEqual({ method: 'AgentStatus', args: [] })
-    await expect(api.agent!.setConfig({ model: 'm', apiKey: 'k' })).resolves.toEqual(agentStatus)
+    await expect(
+      api.agent!.upsertProvider({ name: 'P', baseUrl: 'https://x.test/v1', models: ['m'] })
+    ).resolves.toEqual(agentStatus)
     expect(bridge.calls.at(-1)).toEqual({
-      method: 'AgentSetConfig',
-      args: [{ model: 'm', apiKey: 'k' }]
+      method: 'AgentUpsertProvider',
+      args: [{ name: 'P', baseUrl: 'https://x.test/v1', models: ['m'] }]
     })
+    await expect(api.agent!.setProviderKey('p1', 'k')).resolves.toEqual(agentStatus)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentSetProviderKey', args: ['p1', 'k'] })
+    await expect(api.agent!.setDefaultModel('p1', 'm')).resolves.toEqual(agentStatus)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentSetDefaultModel', args: ['p1', 'm'] })
+    await expect(api.agent!.deleteProvider('p1')).resolves.toEqual(agentStatus)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentDeleteProvider', args: ['p1'] })
     bridge.setResult(undefined)
-    await api.agent!.prompt('s1', 'prod-web', 'hello')
-    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentPrompt', args: ['s1', 'prod-web', 'hello'] })
+    await api.agent!.prompt('s1', 'prod-web', 'hello', 'p1', 'm')
+    expect(bridge.calls.at(-1)).toEqual({
+      method: 'AgentPrompt',
+      args: ['s1', 'prod-web', 'hello', 'p1', 'm']
+    })
     await api.agent!.abort('s1')
     expect(bridge.calls.at(-1)).toEqual({ method: 'AgentAbort', args: ['s1'] })
     await api.agent!.clear('s1')

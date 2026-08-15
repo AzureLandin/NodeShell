@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+import { useState, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AgentPanel } from '../../src/renderer/src/components/AgentPanel'
+import type { PermissionAskEvent } from '../../src/shared/types'
 import { emitAgentEvent, installFakeApi, renderWithI18n, type FakeApi } from './helpers'
 
 /**
@@ -23,8 +25,9 @@ function renderPanel(
   if (overrides.configured === false) {
     fake.mocks.agent.status.mockResolvedValue({
       configured: false,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini'
+      providers: [],
+      defaultProviderId: '',
+      defaultModel: ''
     })
   }
   const onOpenSettings = vi.fn()
@@ -53,7 +56,13 @@ describe('AgentPanel prompting', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() =>
-      expect(fake.mocks.agent.prompt).toHaveBeenCalledWith('s1', 'prod-web', 'how is the disk?')
+      expect(fake.mocks.agent.prompt).toHaveBeenCalledWith(
+        's1',
+        'prod-web',
+        'how is the disk?',
+        'p1',
+        'gpt-4o-mini'
+      )
     )
     expect(await screen.findByText('how is the disk?')).toBeInTheDocument()
 
@@ -270,7 +279,7 @@ describe('AgentPanel guards', () => {
     await user.type(input, 'hello')
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
-    await waitFor(() => expect(fake.mocks.agent.prompt).toHaveBeenCalled())
+    expect(fake.mocks.agent.prompt).not.toHaveBeenCalled()
     expect(
       await screen.findAllByText('Add an API key in Settings to use the agent.')
     ).not.toHaveLength(0)
@@ -290,5 +299,108 @@ describe('AgentPanel guards', () => {
       await screen.findByText('Agent is still working on the previous message')
     ).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument()
+  })
+
+  it('sends with the model selected in the picker and remembers it as the default', async () => {
+    const { fake } = renderPanel()
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByLabelText('Model'))
+    await user.click(await screen.findByRole('option', { name: 'gpt-4o' }))
+    await waitFor(() => expect(fake.mocks.agent.setDefaultModel).toHaveBeenCalledWith('p1', 'gpt-4o'))
+
+    await user.type(await composer(), 'use the bigger model')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(fake.mocks.agent.prompt).toHaveBeenCalledWith(
+        's1',
+        'prod-web',
+        'use the bigger model',
+        'p1',
+        'gpt-4o'
+      )
+    )
+  })
+
+  it('keeps a per-tab model pick when switching sessions', async () => {
+    const fake = installFakeApi()
+    function Harness(): ReactElement {
+      const [id, setId] = useState('s1')
+      return (
+        <div>
+          <button type="button" onClick={() => setId(id === 's1' ? 's2' : 's1')}>
+            swap
+          </button>
+          <AgentPanel
+            activeSessionId={id}
+            activeSessionTitle="prod-web"
+            connected
+            onOpenSettings={() => undefined}
+          />
+        </div>
+      )
+    }
+    renderWithI18n(<Harness />)
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByLabelText('Model'))
+    await user.click(await screen.findByRole('option', { name: 'gpt-4o' }))
+    await user.click(screen.getByRole('button', { name: 'swap' }))
+    await user.type(await composer(), 'on tab two')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(fake.mocks.agent.prompt).toHaveBeenCalledWith(
+        's2',
+        'prod-web',
+        'on tab two',
+        'p1',
+        'gpt-4o-mini'
+      )
+    )
+
+    await user.click(screen.getByRole('button', { name: 'swap' }))
+    await user.type(await composer(), 'back on tab one')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(fake.mocks.agent.prompt).toHaveBeenCalledWith(
+        's1',
+        'prod-web',
+        'back on tab one',
+        'p1',
+        'gpt-4o'
+      )
+    )
+  })
+})
+
+describe('AgentPanel permission prompt', () => {
+  it('renders an inline ask above the composer and reports the decision', async () => {
+    installFakeApi()
+    const onDecide = vi.fn()
+    const request: PermissionAskEvent = {
+      id: 'ask-1',
+      source: 'agent',
+      tool: 'bash',
+      sessionId: 's1',
+      title: 'prod-web',
+      summary: 'uptime'
+    }
+    renderWithI18n(
+      <AgentPanel
+        activeSessionId="s1"
+        activeSessionTitle="prod-web"
+        connected
+        onOpenSettings={vi.fn()}
+        permissionRequest={request}
+        onPermissionDecide={onDecide}
+      />
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Permission required' })
+    expect(dialog.closest('.agent-panel')).toBeTruthy()
+    expect(screen.getByText('uptime')).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Allow once' }))
+    expect(onDecide).toHaveBeenCalledWith('allow')
   })
 })

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,7 @@ func TestDefaultsWhenFileMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != Defaults {
+	if !reflect.DeepEqual(got, Defaults) {
 		t.Fatalf("got %+v, want defaults %+v", got, Defaults)
 	}
 }
@@ -47,8 +48,13 @@ func TestGetFromFullFixture(t *testing.T) {
 	want := AppSettings{Language: "en", TerminalFontFamily: "Cascadia Code", TerminalFontSize: 16,
 		McpIdleTimeoutMinutes: 30, McpMaxSessions: 4, ThemePreference: "light",
 		AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
+		AgentProviders: []AgentProvider{{
+			ID: LegacyProviderID, Name: LegacyProviderName,
+			BaseURL: "https://api.deepseek.com/v1", Models: []string{"deepseek-chat"},
+		}},
+		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: "deepseek-chat",
 		PermissionPolicy: Defaults.PermissionPolicy}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
@@ -66,6 +72,9 @@ func TestPartialFixtureFillsDefaults(t *testing.T) {
 		got.McpIdleTimeoutMinutes != 10 || got.McpMaxSessions != 8 || got.ThemePreference != "system" ||
 		got.PermissionPolicy != "ask" {
 		t.Fatalf("partial merge mismatch: %+v", got)
+	}
+	if len(got.AgentProviders) != 1 || got.AgentProviders[0].ID != LegacyProviderID {
+		t.Fatalf("old file without agentProviders must synthesise a legacy provider: %+v", got.AgentProviders)
 	}
 }
 
@@ -111,8 +120,10 @@ func TestClampsValues(t *testing.T) {
 	want := AppSettings{Language: "zh", TerminalFontFamily: "Hack", TerminalFontSize: 10,
 		McpIdleTimeoutMinutes: 1, McpMaxSessions: 32, ThemePreference: "system",
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
+		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
+		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
 		PermissionPolicy: Defaults.PermissionPolicy}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clamp mismatch: got %+v want %+v", got, want)
 	}
 	after, err := store.Set(Patch{TerminalFontSize: f64p(99), McpIdleTimeoutMinutes: f64p(200)})
@@ -194,7 +205,7 @@ func TestNullShapeIsCorruptArrayYieldsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("array file: %v", err)
 	}
-	if got != Defaults {
+	if !reflect.DeepEqual(got, Defaults) {
 		t.Fatalf("array file should normalize to defaults (TS typeof check), got %+v", got)
 	}
 }
@@ -230,8 +241,10 @@ func TestWrongTypedStringFieldsNormalizeLikeTS(t *testing.T) {
 	want := AppSettings{Language: "zh", TerminalFontFamily: "Hack", TerminalFontSize: 14,
 		McpIdleTimeoutMinutes: 10, McpMaxSessions: 8, ThemePreference: "system",
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
+		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
+		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
 		PermissionPolicy: Defaults.PermissionPolicy}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v (TS normalize* falls back to defaults)", got, want)
 	}
 }
@@ -403,6 +416,82 @@ func TestNumericCoercionMatchesJSNumber(t *testing.T) {
 				t.Fatalf("terminalFontSize = %d, want %d (fixture %s)", got.TerminalFontSize, tc.want, tc.raw)
 			}
 		})
+	}
+}
+
+func TestAgentProvidersNormalisation(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{
+	  "agentProviders": [
+	    {"id": "p1", "name": " DeepSeek ", "baseUrl": "https://api.deepseek.com/v1/", "models": [" deepseek-chat ", "deepseek-chat", ""]},
+	    {"id": "p1", "name": "dup", "baseUrl": "https://x.test/v1", "models": ["m"]},
+	    {"id": "bad::id", "name": "x", "baseUrl": "https://x.test/v1", "models": ["m"]},
+	    {"id": "file", "name": "x", "baseUrl": "file:///etc/passwd", "models": ["m"]},
+	    {"id": "p2", "name": "Local", "baseUrl": "http://127.0.0.1:11434/v1", "models": ["llama"]}
+	  ],
+	  "agentDefaultProviderId": "missing",
+	  "agentDefaultModel": "nope"
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := New(dir).Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.AgentProvidersPresent {
+		t.Fatal("a present agentProviders field must set AgentProvidersPresent")
+	}
+	want := []AgentProvider{
+		{ID: "p1", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", Models: []string{"deepseek-chat"}},
+		{ID: "p2", Name: "Local", BaseURL: "http://127.0.0.1:11434/v1", Models: []string{"llama"}},
+	}
+	if !reflect.DeepEqual(got.AgentProviders, want) {
+		t.Fatalf("providers = %+v, want %+v", got.AgentProviders, want)
+	}
+	if got.AgentDefaultProviderID != "p1" || got.AgentDefaultModel != "deepseek-chat" {
+		t.Fatalf("default = (%q, %q), want the first valid provider's first model",
+			got.AgentDefaultProviderID, got.AgentDefaultModel)
+	}
+}
+
+func TestEmptyAgentProvidersIsNotLegacyMigration(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"agentProviders": [], "agentBaseUrl": "https://api.deepseek.com/v1", "agentModel": "deepseek-chat"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := New(dir).Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.AgentProvidersPresent {
+		t.Fatal("empty array is a present field")
+	}
+	if len(got.AgentProviders) != 0 {
+		t.Fatalf("empty array must not synthesise a legacy provider: %+v", got.AgentProviders)
+	}
+}
+
+func TestAgentProvidersCapAndSetRoundTrip(t *testing.T) {
+	in := make([]AgentProvider, AgentProviderMax+2)
+	for i := range in {
+		in[i] = AgentProvider{
+			ID:      "p" + strings.Repeat("x", i) + "id",
+			Name:    "N",
+			BaseURL: "https://x.test/v1",
+			Models:  []string{"m"},
+		}
+	}
+	got, err := newStore(t).Set(Patch{AgentProviders: &in})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if len(got.AgentProviders) != AgentProviderMax {
+		t.Fatalf("kept %d providers, want the %d cap", len(got.AgentProviders), AgentProviderMax)
+	}
+	if !got.AgentProvidersPresent {
+		t.Fatal("Set must persist agentProviders as a present field")
 	}
 }
 

@@ -103,6 +103,7 @@ type fakeManager struct {
 	execErr      error
 	execTimeouts []time.Duration
 	execCmds     []string
+	execSessions []string
 	sftpClient   sshclient.SFTPClient
 	sftpErr      error
 
@@ -226,6 +227,7 @@ func (m *fakeManager) Exec(sessionID string, ctx context.Context, command string
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.execSessions = append(m.execSessions, sessionID)
 	m.execTimeouts = append(m.execTimeouts, timeout)
 	m.execCmds = append(m.execCmds, command)
 	if !m.live[sessionID] {
@@ -260,6 +262,7 @@ type fakeSFTP struct {
 	mu            sync.Mutex
 	cwd           string
 	chdirs        []string
+	lists         []string
 	entries       []sftpservice.Entry
 	listErr       error
 	readResolved  string
@@ -273,6 +276,7 @@ type fakeSFTP struct {
 	downloads     []sftpDownloadCall
 	downloadErr   error
 	disposed      []string
+	interrupted   []string
 }
 
 func (s *fakeSFTP) Chdir(sessionID, remotePath string) (string, error) {
@@ -291,6 +295,7 @@ func (s *fakeSFTP) Cwd(sessionID string) (string, error) {
 func (s *fakeSFTP) List(sessionID, remotePath string) ([]sftpservice.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lists = append(s.lists, remotePath)
 	return s.entries, s.listErr
 }
 
@@ -331,6 +336,12 @@ func (s *fakeSFTP) Dispose(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.disposed = append(s.disposed, sessionID)
+}
+
+func (s *fakeSFTP) Interrupt(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interrupted = append(s.interrupted, sessionID)
 }
 
 func (s *fakeSFTP) snapshot() (chdirs []string, writes []sftpWriteCall, uploads []sftpUploadCall, downloads []sftpDownloadCall, disposed []string) {

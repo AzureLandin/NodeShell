@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../src/renderer/src/App'
 import { PermissionModal } from '../../src/renderer/src/components/PermissionModal'
@@ -52,6 +52,18 @@ describe('PermissionModal', () => {
     renderWithI18n(<PermissionModal request={ask()} onDecide={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Deny' })).toHaveFocus()
   })
+
+  it('renders the inline variant inside the caller without an overlay', () => {
+    renderWithI18n(
+      <PermissionModal variant="inline" request={ask()} onDecide={vi.fn()} />
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Permission required' })
+    expect(dialog).toHaveClass('agent-permission')
+    expect(dialog.querySelector('.permission-modal-overlay')).toBeNull()
+    expect(document.querySelector('.permission-modal-overlay')).toBeNull()
+    expect(screen.queryByText('Agent')).not.toBeInTheDocument()
+    expect(screen.getByText('Host: prod-web')).toBeInTheDocument()
+  })
 })
 
 describe('App permission prompt', () => {
@@ -71,7 +83,9 @@ describe('App permission prompt', () => {
     await waitFor(() => expect(fake.mocks.permission.onAsk).toHaveBeenCalled())
 
     emitPermissionAsk(fake, ask({ tool: 'sftp_write', summary: '/tmp/x', detail: '6 bytes' }))
-    expect(await screen.findByRole('dialog', { name: 'Permission required' })).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog', { name: 'Permission required' })
+    expect(dialog.closest('.agent-panel')).toBeTruthy()
+    expect(document.querySelector('.permission-modal-overlay')).toBeNull()
     expect(screen.getByText('Write remote file')).toBeInTheDocument()
     expect(screen.getByText('/tmp/x')).toBeInTheDocument()
 
@@ -83,7 +97,54 @@ describe('App permission prompt', () => {
     )
   })
 
-  it('dismisses the modal when the backend cancels the ask', async () => {
+  it('keeps MCP asks on the overlay', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue({
+      language: 'en',
+      themePreference: 'system',
+      terminalFontFamily: 'Hack',
+      terminalFontSize: 14,
+      mcpIdleTimeoutMinutes: 10,
+      mcpMaxSessions: 8
+    })
+    fake.mocks.hosts.list.mockResolvedValue([])
+    renderWithI18n(<App />)
+    await waitFor(() => expect(fake.mocks.permission.onAsk).toHaveBeenCalled())
+
+    emitPermissionAsk(fake, ask({ source: 'mcp', title: 'mcp-host' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Permission required' })
+    expect(dialog.closest('.permission-modal-overlay')).toBeTruthy()
+    expect(dialog.closest('.agent-panel')).toBeNull()
+    expect(screen.getByText('MCP client')).toBeInTheDocument()
+  })
+
+  it('reopens the agent dock when an agent ask arrives while it is hidden', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue({
+      language: 'en',
+      themePreference: 'system',
+      terminalFontFamily: 'Hack',
+      terminalFontSize: 14,
+      mcpIdleTimeoutMinutes: 10,
+      mcpMaxSessions: 8
+    })
+    fake.mocks.hosts.list.mockResolvedValue([])
+    renderWithI18n(<App />)
+    await waitFor(() => expect(fake.mocks.permission.onAsk).toHaveBeenCalled())
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Hide Agent' }))
+    expect(document.querySelector('.agent-dock')).toHaveClass('is-collapsed')
+
+    act(() => {
+      emitPermissionAsk(fake, ask())
+    })
+    expect(document.querySelector('.agent-dock')).not.toHaveClass('is-collapsed')
+    const dialog = await screen.findByRole('dialog', { name: 'Permission required' })
+    expect(dialog.closest('.agent-panel')).toBeTruthy()
+  })
+
+  it('dismisses the prompt when the backend cancels the ask', async () => {
     const fake = installFakeApi()
     fake.mocks.settings.get.mockResolvedValue({
       language: 'en',

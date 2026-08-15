@@ -1315,3 +1315,24 @@ func readN(t *testing.T, r io.Reader, n int, timeout time.Duration) ([]byte, err
 	}
 	return out, nil
 }
+
+func TestSessionDialWhenClosed(t *testing.T) {
+	s := &Session{closed: true}
+	_, err := s.Dial("tcp", "127.0.0.1:1")
+	var coded *Error
+	if !errors.As(err, &coded) || coded.Code != apperror.Unknown {
+		t.Fatalf("Dial closed = %v", err)
+	}
+}
+
+func TestMapForwardError(t *testing.T) {
+	err := mapForwardError(errors.New("ssh: rejected: administratively prohibited"))
+	var coded *Error
+	if !errors.As(err, &coded) || coded.Code != apperror.PermissionDenied {
+		t.Fatalf("mapForwardError prohibited = %v", err)
+	}
+	err = mapForwardError(errors.New("connection reset"))
+	if !errors.As(err, &coded) || coded.Code != apperror.Unknown {
+		t.Fatalf("mapForwardError other = %v", err)
+	}
+}

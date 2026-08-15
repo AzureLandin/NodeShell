@@ -17,19 +17,32 @@ export interface AppSettings {
   /** UI + terminal theme preference (default system). */
   themePreference: ThemePreference
   /**
-   * OpenAI-compatible base URL for the sidebar agent, including the
-   * provider's version prefix (e.g. https://api.openai.com/v1). The agent's
-   * API key is not part of the settings file; it lives in the OS keyring and
-   * is written through api.agent.setConfig.
+   * Named OpenAI-compatible providers for the sidebar agent. API keys are not
+   * part of the settings file; they live in the OS keyring and are written
+   * through api.agent.setProviderKey.
+   */
+  agentProviders?: AgentProvider[]
+  agentDefaultProviderId?: string
+  agentDefaultModel?: string
+  /**
+   * Pre-multi-provider endpoint fields. Still read for migration; new writes
+   * go through agentProviders.
    */
   agentBaseUrl?: string
-  /** Model id the sidebar agent requests. */
+  /** Model id the sidebar agent requests (legacy single-endpoint field). */
   agentModel?: string
   /**
    * How sensitive agent/MCP tools (commands, writes, uploads, downloads)
    * are authorised. Default `ask`.
    */
   permissionPolicy?: PermissionPolicy
+}
+
+export interface AgentProvider {
+  id: string
+  name: string
+  baseUrl: string
+  models: string[]
 }
 
 export interface HostConfig {
@@ -174,18 +187,43 @@ export interface PermissionClosedEvent {
   id: string
 }
 
-/** Agent endpoint state; the API key is never returned, only whether one is stored. */
-export interface AgentConfigStatus {
-  configured: boolean
-  baseUrl: string
-  model: string
+/** One remote TCP listener that can be forwarded locally. */
+export interface TunnelListener {
+  bind: string
+  port: number
 }
 
-export interface AgentConfigPatch {
-  baseUrl?: string
-  model?: string
-  /** Stored in the OS keyring; an empty string clears it. */
-  apiKey?: string
+/** One live local port forward. */
+export interface Tunnel {
+  id: string
+  sessionId: string
+  localHost: string
+  localPort: number
+  remoteAddr: string
+  remotePort: number
+}
+
+/** Agent endpoint state; API keys are never returned, only whether each provider has one. */
+export interface AgentProviderStatus {
+  id: string
+  name: string
+  baseUrl: string
+  models: string[]
+  hasKey: boolean
+}
+
+export interface AgentConfigStatus {
+  configured: boolean
+  providers: AgentProviderStatus[]
+  defaultProviderId: string
+  defaultModel: string
+}
+
+export interface AgentProviderInput {
+  id?: string
+  name: string
+  baseUrl: string
+  models: string[]
 }
 
 export interface ElectronApi {
@@ -264,6 +302,12 @@ export interface ElectronApi {
     setActive: (sessionId: string | null, title?: string) => Promise<void>
     onUpdate: (cb: (event: MonitorUpdateEvent) => void) => () => void
   }
+  tunnels: {
+    discover: (sessionId: string) => Promise<TunnelListener[]>
+    start: (sessionId: string, remoteAddr: string, remotePort: number) => Promise<Tunnel>
+    stop: (sessionId: string, tunnelId: string) => Promise<void>
+    list: (sessionId: string) => Promise<Tunnel[]>
+  }
   /**
    * Sidebar assistant bound to one SSH session. Present only in the Wails
    * adapter (the Electron preload predates it), so callers must tolerate it
@@ -271,13 +315,22 @@ export interface ElectronApi {
    */
   agent?: {
     status: () => Promise<AgentConfigStatus>
-    setConfig: (patch: AgentConfigPatch) => Promise<AgentConfigStatus>
+    upsertProvider: (input: AgentProviderInput) => Promise<AgentConfigStatus>
+    deleteProvider: (id: string) => Promise<AgentConfigStatus>
+    setProviderKey: (id: string, apiKey: string) => Promise<AgentConfigStatus>
+    setDefaultModel: (providerId: string, model: string) => Promise<AgentConfigStatus>
     /**
      * Accept one message for the session. Rejects only on a pre-flight
      * failure (not configured, empty prompt, a run already in flight);
      * progress arrives through the events below.
      */
-    prompt: (sessionId: string, title: string, text: string) => Promise<void>
+    prompt: (
+      sessionId: string,
+      title: string,
+      text: string,
+      providerId: string,
+      model: string
+    ) => Promise<void>
     abort: (sessionId: string) => Promise<void>
     clear: (sessionId: string) => Promise<void>
     onDelta: (cb: (event: AgentDeltaEvent) => void) => () => void
@@ -377,8 +430,11 @@ export const IPC = {
   sftpTransferProgress: 'sftp:transferProgress',
   monitorSetActive: 'monitor:setActive',
   monitorUpdate: 'monitor:update',
+  tunnelsDiscover: 'tunnels:discover',
+  tunnelsStart: 'tunnels:start',
+  tunnelsStop: 'tunnels:stop',
+  tunnelsList: 'tunnels:list',
   agentStatus: 'agent:status',
-  agentSetConfig: 'agent:setConfig',
   agentPrompt: 'agent:prompt',
   agentAbort: 'agent:abort',
   agentClear: 'agent:clear',

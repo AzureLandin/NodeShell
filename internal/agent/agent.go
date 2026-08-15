@@ -1,8 +1,9 @@
 // Package agent runs a small tool-calling assistant against one already
 // connected SSH session. It owns no transport of its own: the LLM is reached
 // over an OpenAI-compatible HTTP endpoint, and every tool the model may call
-// is served by the existing session exec and SFTP services, so the assistant
-// can only ever touch the remote host the user is already looking at.
+// is served through BoundCaller → mcpcli.Runtime.Call, with the current
+// session injected so the assistant can only ever touch the remote host the
+// user is already looking at.
 //
 // The package deliberately implements only the loop (prompt -> stream ->
 // tools -> stream) and none of the extras a full coding agent ships: no local
@@ -20,8 +21,7 @@ import (
 	"time"
 
 	"nodeshell/internal/apperror"
-	"nodeshell/internal/permission"
-	"nodeshell/internal/sftpservice"
+	"nodeshell/internal/mcpcli"
 )
 
 // Event names crossing the Wails boundary (mirrored by IPC in
@@ -52,28 +52,10 @@ const (
 	MaxToolResultBytes = 16 * 1024
 	// MaxHistoryMessages bounds the transcript replayed to the model.
 	MaxHistoryMessages = 40
-	// MaxFileBytes bounds the remote text the file tools may read or write.
-	// It is far below the 512KiB GUI editor cap on purpose: a file that does
-	// not fit is reported to the model instead of being streamed into the
-	// request.
-	MaxFileBytes = 64 * 1024
+	// MaxFileBytes is the remote text cap advertised to the model. The MCP
+	// runtime enforces the same limit on read/write.
+	MaxFileBytes = mcpcli.MaxFileBytes
 )
-
-// Execer runs one non-interactive remote command over a session (production
-// is *sessions.Manager; tests inject a fake). ctx cancellation must abort the
-// command; timeout bounds it.
-type Execer interface {
-	Exec(sessionID string, ctx context.Context, command string, timeout time.Duration) (string, error)
-}
-
-// Files is the remote file surface the tools are allowed to use ? the same
-// capped operations the GUI editor and the MCP tools ride, never a local
-// filesystem.
-type Files interface {
-	List(sessionID, remotePath string) ([]sftpservice.Entry, error)
-	ReadText(sessionID, remotePath string, maxBytes int64) (string, string, error)
-	WriteText(sessionID, remotePath, content string, maxBytes int64) (string, error)
-}
 
 // EventSink is the event emission seam; production emits through the Wails
 // runtime, tests record. A nil sink is a no-op.
@@ -93,11 +75,6 @@ type Config struct {
 	Model   string
 	APIKey  string
 }
-
-// ConfigLoader resolves the current configuration. The App wires it to the
-// settings store plus the OS keyring, so a key rotated in settings applies to
-// the next prompt without rebuilding the service.
-type ConfigLoader func() (Config, error)
 
 // ErrNotConfigured is the pre-flight rejection for a missing API key or
 // model. It is returned before a run starts, so the UI can point the user at
@@ -161,17 +138,12 @@ type ErrorEvent struct {
 // Deps wires a Service. Zero timeouts and turn counts fall back to the
 // package defaults; tests inject shorter ones.
 type Deps struct {
-	Execer         Execer
-	Files          Files
+	Tools          ToolCaller
 	Sink           EventSink
-	Config         ConfigLoader
 	Client         *http.Client
 	MaxTurns       int
 	ExecTimeout    time.Duration
 	RequestTimeout time.Duration
-	// Auth gates sensitive tools (bash, sftp_write). Nil allows, which is
-	// how unit tests that do not care about the prompt keep passing.
-	Auth permission.Authorizer
 }
 
 // conversation is the per-session transcript plus the handle on its in-flight
@@ -192,15 +164,12 @@ type conversation struct {
 // and dropped when that session closes, so a torn-down SSH connection can
 // never leave a transcript or a running loop behind.
 type Service struct {
-	exec           Execer
-	files          Files
+	tools          ToolCaller
 	sink           EventSink
-	config         ConfigLoader
 	client         *http.Client
 	maxTurns       int
 	execTimeout    time.Duration
 	requestTimeout time.Duration
-	auth           permission.Authorizer
 
 	// mu guards convs and closed. It is never held while an LLM request runs,
 	// a tool executes or an event is emitted.
@@ -229,25 +198,24 @@ func New(d Deps) *Service {
 		d.RequestTimeout = DefaultRequestTimeout
 	}
 	return &Service{
-		exec:           d.Execer,
-		files:          d.Files,
+		tools:          d.Tools,
 		sink:           d.Sink,
-		config:         d.Config,
 		client:         d.Client,
 		maxTurns:       d.MaxTurns,
 		execTimeout:    d.ExecTimeout,
 		requestTimeout: d.RequestTimeout,
-		auth:           d.Auth,
 		convs:          make(map[string]*conversation),
 	}
 }
 
 // Prompt accepts one user message for the session and starts a run in the
-// background. It returns an error only for a pre-flight rejection (empty or
-// oversized prompt, missing configuration, a run already in flight); once
-// accepted, progress and failures are reported through the events, and
-// exactly one DoneEvent closes the run.
-func (s *Service) Prompt(sessionID, title, text string) error {
+// background. cfg is the already-resolved endpoint (provider + model + key)
+// for this send; switching models between prompts keeps the same transcript.
+// It returns an error only for a pre-flight rejection (empty or oversized
+// prompt, missing configuration, a run already in flight); once accepted,
+// progress and failures are reported through the events, and exactly one
+// DoneEvent closes the run.
+func (s *Service) Prompt(sessionID, title, text string, cfg Config) error {
 	prompt := strings.TrimSpace(text)
 	if sessionID == "" {
 		return errf(apperror.SessionNotFound, "Session not found")
@@ -257,13 +225,6 @@ func (s *Service) Prompt(sessionID, title, text string) error {
 	}
 	if len(prompt) > MaxPromptBytes {
 		return errf(apperror.Unknown, "Prompt is too long")
-	}
-	if s.config == nil {
-		return ErrNotConfigured
-	}
-	cfg, err := s.config()
-	if err != nil {
-		return err
 	}
 	if strings.TrimSpace(cfg.APIKey) == "" || strings.TrimSpace(cfg.Model) == "" ||
 		strings.TrimSpace(cfg.BaseURL) == "" {

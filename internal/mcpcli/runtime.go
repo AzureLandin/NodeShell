@@ -68,6 +68,10 @@ type SFTP interface {
 	UploadAs(sessionID, localPath, remoteName string) error
 	Download(sessionID, remotePath, localPath string) error
 	Dispose(sessionID string)
+	// Interrupt closes the cached client so an in-flight pkg/sftp call
+	// unblocks, but keeps the session handle and cwd. Guest (in-app Agent)
+	// cancel uses this so the GUI SFTP panel is not snapped back to home.
+	Interrupt(sessionID string)
 }
 
 // Error carries the stable MCP error code for the server to format; messages
@@ -98,6 +102,11 @@ type Deps struct {
 	NextSink sessions.EventSink
 	// Auth gates sensitive tools. Nil allows, matching existing tests.
 	Auth permission.Authorizer
+	// GuestSessions lets Call operate on session ids the runtime did not
+	// ConnectHost. The in-app Agent uses this so GUI tabs are valid targets.
+	// Production --mcp wiring leaves it false. A guest runtime must not start
+	// the idle reaper: there is no metadata to protect GUI sessions with.
+	GuestSessions bool
 }
 
 // sessionMeta is one session's MCP-side state. Passwords never live here.
@@ -127,6 +136,7 @@ type Runtime struct {
 	maxSess int
 	idleTmo time.Duration
 	auth    permission.Authorizer
+	guest   bool
 
 	mu      sync.Mutex
 	meta    map[string]*sessionMeta
@@ -178,6 +188,7 @@ func New(d Deps) *Runtime {
 		maxSess: maxSess,
 		idleTmo: idle,
 		auth:    d.Auth,
+		guest:   d.GuestSessions,
 		meta:    map[string]*sessionMeta{},
 	}
 	r.tombstones = map[string]bool{}
@@ -224,17 +235,35 @@ func (r *Runtime) sessionTitle(sessionID string) string {
 	return ""
 }
 
+// CallOpts customizes one Call. The zero value matches stdio MCP: SourceMCP
+// and the title recorded at ConnectHost (empty for guest sessions).
+type CallOpts struct {
+	// Source labels the permission prompt. Empty uses SourceMCP.
+	Source string
+	// Title is shown in the permission prompt. Empty uses the runtime
+	// metadata title.
+	Title string
+}
+
 // authorize asks before a sensitive MCP tool runs. Nil Auth allows (tests).
 // The request never carries file contents or passwords.
-func (r *Runtime) authorize(ctx context.Context, tool, sessionID, summary, detail string) error {
+func (r *Runtime) authorize(ctx context.Context, opts CallOpts, tool, sessionID, summary, detail string) error {
 	if r.auth == nil {
 		return nil
 	}
+	source := opts.Source
+	if source == "" {
+		source = permission.SourceMCP
+	}
+	title := opts.Title
+	if title == "" {
+		title = r.sessionTitle(sessionID)
+	}
 	return r.auth.Authorize(ctx, permission.Request{
-		Source:    permission.SourceMCP,
+		Source:    source,
 		Tool:      tool,
 		SessionID: sessionID,
-		Title:     r.sessionTitle(sessionID),
+		Title:     title,
 		Summary:   permission.Truncate(summary),
 		Detail:    detail,
 	})
@@ -468,6 +497,13 @@ func (r *Runtime) sftpDispose(sessionID string) {
 	}
 }
 
+// sftpInterrupt is safe to call with a nil service.
+func (r *Runtime) sftpInterrupt(sessionID string) {
+	if r.sftp != nil {
+		r.sftp.Interrupt(sessionID)
+	}
+}
+
 // RunCommand runs a remote command over the session. The timeout clamps into
 // [1, 300000] ms with a 60s default; the 2MiB stdout cap lives in the
 // sshclient exec layer. The session is marked busy for the whole call so the
@@ -506,15 +542,16 @@ type sftpResult[T any] struct {
 }
 
 // sftpOp runs one SFTP operation under ctx. pkg/sftp has no context API, so
-// the operation runs on a worker goroutine; a cancelled ctx disposes the
-// session's SFTP client — closing it unblocks every in-flight pkg/sftp call —
-// then joins the worker (never a goroutine leak) and maps the outcome to
-// CANCELLED. The operation's own result wins when it finishes before the
-// cancel is observed. The caller holds the session busy via begin/done; the
-// join happens before this returns, so the busy count is never released
-// while the worker could still be running. All five SFTP tools route through
-// this helper; the ctx-aware operations (run_command, connect) pass ctx into
-// the manager directly.
+// the operation runs on a worker goroutine; a cancelled ctx closes the
+// session's SFTP client — unblocking every in-flight pkg/sftp call — then
+// joins the worker (never a goroutine leak) and maps the outcome to
+// CANCELLED. MCP-owned sessions Dispose the handle; guest sessions Interrupt
+// so the GUI panel's cwd survives. The operation's own result wins when it
+// finishes before the cancel is observed. The caller holds the session busy
+// via begin/done; the join happens before this returns, so the busy count is
+// never released while the worker could still be running. All five SFTP
+// tools route through this helper; the ctx-aware operations (run_command,
+// connect) pass ctx into the manager directly.
 func sftpOp[T any](r *Runtime, ctx context.Context, sessionID string, run func() (T, error)) (T, error) {
 	ch := make(chan sftpResult[T], 1)
 	go func() {
@@ -525,8 +562,15 @@ func sftpOp[T any](r *Runtime, ctx context.Context, sessionID string, run func()
 	case res := <-ch:
 		return res.value, res.err
 	case <-ctx.Done():
-		// Dispose closes the session's SFTP client, unblocking the worker.
-		r.sftpDispose(sessionID)
+		// pkg/sftp has no context API: closing the client unblocks the
+		// worker. MCP-owned sessions Dispose the whole handle. Guest
+		// sessions share the GUI SFTP service, so cancel only Interrupts
+		// the cached client and keeps Session.cwd for the panel.
+		if r.guest {
+			r.sftpInterrupt(sessionID)
+		} else {
+			r.sftpDispose(sessionID)
+		}
 		<-ch // join the worker so no goroutine outlives the call
 		var zero T
 		return zero, &Error{Code: apperror.Cancelled, Message: "Operation cancelled"}
@@ -536,6 +580,14 @@ func sftpOp[T any](r *Runtime, ctx context.Context, sessionID string, run func()
 // SftpList lists the session's remote directory; an optional path is chdir'd
 // first (the TS side effect).
 func (r *Runtime) SftpList(ctx context.Context, sessionID, remotePath string) (SftpListResult, error) {
+	return r.sftpList(ctx, sessionID, remotePath, true)
+}
+
+// sftpList lists a remote directory. When chdir is true (MCP default) an
+// optional path is chdir'd first so later tools see that cwd. When chdir is
+// false the path is listed in place and the session cwd is left alone — the
+// in-app Agent uses that so the GUI SFTP panel does not jump.
+func (r *Runtime) sftpList(ctx context.Context, sessionID, remotePath string, chdir bool) (SftpListResult, error) {
 	done, err := r.begin(sessionID)
 	if err != nil {
 		return SftpListResult{}, err
@@ -545,16 +597,20 @@ func (r *Runtime) SftpList(ctx context.Context, sessionID, remotePath string) (S
 		return SftpListResult{}, &Error{Code: apperror.Unknown, Message: "SFTP is not initialised"}
 	}
 	return sftpOp(r, ctx, sessionID, func() (SftpListResult, error) {
-		if remotePath != "" {
-			if _, err := r.sftp.Chdir(sessionID, remotePath); err != nil {
-				return SftpListResult{}, err
+		listPath := remotePath
+		if chdir {
+			if remotePath != "" {
+				if _, err := r.sftp.Chdir(sessionID, remotePath); err != nil {
+					return SftpListResult{}, err
+				}
 			}
+			listPath = ""
 		}
 		cwd, err := r.sftp.Cwd(sessionID)
 		if err != nil {
 			return SftpListResult{}, err
 		}
-		entries, err := r.sftp.List(sessionID, "")
+		entries, err := r.sftp.List(sessionID, listPath)
 		if err != nil {
 			return SftpListResult{}, err
 		}
@@ -658,7 +714,15 @@ func (r *Runtime) SftpDownload(ctx context.Context, sessionID, remotePath, local
 func (r *Runtime) begin(sessionID string) (func(), error) {
 	r.mu.Lock()
 	m, ok := r.meta[sessionID]
-	if !ok || m.reaping {
+	if !ok {
+		guest := r.guest && !r.closed
+		r.mu.Unlock()
+		if guest {
+			return func() {}, nil
+		}
+		return nil, &Error{Code: apperror.SessionNotFound, Message: fmt.Sprintf("Session not found: %s", sessionID)}
+	}
+	if m.reaping {
 		r.mu.Unlock()
 		return nil, &Error{Code: apperror.SessionNotFound, Message: fmt.Sprintf("Session not found: %s", sessionID)}
 	}

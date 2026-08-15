@@ -237,6 +237,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const offAsk = window.api.permission.onAsk((event) => {
       setPermissionQueue((q) => (q.some((r) => r.id === event.id) ? q : [...q, event]))
+      if (event.source === 'agent') setAgentOpen(true)
     })
     const offClosed = window.api.permission.onClosed((event) => {
       setPermissionQueue((q) => q.filter((r) => r.id !== event.id))
@@ -726,6 +727,10 @@ function App(): React.JSX.Element {
               connected={activeConnected}
               onOpenSettings={() => setSettingsOpen(true)}
               onHide={() => setAgentOpen(false)}
+              permissionRequest={
+                permissionQueue[0]?.source === 'agent' ? permissionQueue[0] : null
+              }
+              onPermissionDecide={handlePermissionDecide}
             />
           </ErrorBoundary>
         </div>
@@ -797,7 +802,7 @@ function App(): React.JSX.Element {
           }}
         />
       )}
-      {permissionQueue[0] && (
+      {permissionQueue[0] && permissionQueue[0].source !== 'agent' && (
         <PermissionModal request={permissionQueue[0]} onDecide={handlePermissionDecide} />
       )}
       <Toast message={toastMessage} onClose={() => setToast(null)} />

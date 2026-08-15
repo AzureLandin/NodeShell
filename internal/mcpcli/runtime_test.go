@@ -409,6 +409,9 @@ func (b *blockingSFTP) Download(sessionID, remotePath, localPath string) error {
 	return b.inner.Download(sessionID, remotePath, localPath)
 }
 func (b *blockingSFTP) Dispose(sessionID string) { b.inner.Dispose(sessionID) }
+func (b *blockingSFTP) Interrupt(sessionID string) {
+	b.inner.Interrupt(sessionID)
+}
 
 // TestDisposeAll: DisposeAll stops the reaper, disconnects every session and
 // disposes every SFTP handle; a subsequent operation is SESSION_NOT_FOUND.
@@ -878,4 +881,47 @@ func TestSftpDownloadGuardBeforeMkdir(t *testing.T) {
 	if _, err := os.Stat(inside); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("in-home parent was created as a side effect: %v", err)
 	}
+}
+
+// TestGuestSessionsBeginAllowsUnregisteredId: GuestSessions lets RunCommand
+// proceed on a session the runtime never ConnectHost'd; the manager then
+// accepts or rejects the id. Without the flag, begin still returns
+// SESSION_NOT_FOUND before any Exec.
+func TestGuestSessionsBeginAllowsUnregisteredId(t *testing.T) {
+	m := newFakeManager()
+	m.live["gui-1"] = true
+	m.execOut = "up 4 days"
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: &fakeSFTP{},
+		MaxSessions: 2, IdleTimeout: time.Minute, GuestSessions: true,
+	})
+
+	out, err := rt.RunCommand(context.Background(), "gui-1", "uptime", 0)
+	if err != nil {
+		t.Fatalf("guest RunCommand: %v", err)
+	}
+	if out != "up 4 days" {
+		t.Fatalf("output = %q", out)
+	}
+	if len(m.execSessions) != 1 || m.execSessions[0] != "gui-1" {
+		t.Fatalf("exec sessions = %v, want [gui-1]", m.execSessions)
+	}
+
+	locked := newTestRuntime(2, time.Minute, newFakeManager(), &fakeSFTP{}, nil)
+	_, err = locked.RunCommand(context.Background(), "gui-1", "uptime", 0)
+	assertErrorCode(t, err, apperror.SessionNotFound)
+}
+
+// TestGuestSessionsRefuseAfterDisposeAll: a closed guest runtime must not
+// run tools against leftover GUI session ids.
+func TestGuestSessionsRefuseAfterDisposeAll(t *testing.T) {
+	m := newFakeManager()
+	m.live["gui-1"] = true
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: &fakeSFTP{},
+		GuestSessions: true,
+	})
+	rt.DisposeAll()
+	_, err := rt.RunCommand(context.Background(), "gui-1", "uptime", 0)
+	assertErrorCode(t, err, apperror.SessionNotFound)
 }

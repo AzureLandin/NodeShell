@@ -4,6 +4,7 @@ import i18n from 'i18next'
 import { vi } from 'vitest'
 import type { ReactElement } from 'react'
 import type {
+  AgentConfigStatus,
   AgentDeltaEvent,
   AgentDoneEvent,
   AgentErrorEvent,
@@ -16,6 +17,21 @@ import type {
   SessionErrorEvent
 } from '../../src/shared/types'
 import en from '../../src/renderer/src/i18n/locales/en.json'
+
+export const defaultAgentStatus: AgentConfigStatus = {
+  configured: true,
+  providers: [
+    {
+      id: 'p1',
+      name: 'OpenAI',
+      baseUrl: 'https://api.openai.com/v1',
+      models: ['gpt-4o-mini', 'gpt-4o'],
+      hasKey: true
+    }
+  ],
+  defaultProviderId: 'p1',
+  defaultModel: 'gpt-4o-mini'
+}
 
 /**
  * Shared T1.8.3 UI-test plumbing: a fake window.api recording every call, and
@@ -52,6 +68,7 @@ export interface ApiMocks {
   sftp: MockGroup<ElectronApi['sftp']>
   files: MockGroup<ElectronApi['files']>
   monitor: MockGroup<ElectronApi['monitor']>
+  tunnels: MockGroup<ElectronApi['tunnels']>
   agent: MockGroup<NonNullable<ElectronApi['agent']>>
   permission: MockGroup<ElectronApi['permission']>
   fonts: MockGroup<ElectronApi['fonts']>
@@ -102,9 +119,18 @@ export function createFakeApi(): FakeApi {
       onDrop: vi.fn(() => vi.fn())
     },
     monitor: { setActive: vi.fn(), onUpdate: vi.fn(() => () => undefined) },
+    tunnels: {
+      discover: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      list: vi.fn()
+    },
     agent: {
       status: vi.fn(),
-      setConfig: vi.fn(),
+      upsertProvider: vi.fn(),
+      deleteProvider: vi.fn(),
+      setProviderKey: vi.fn(),
+      setDefaultModel: vi.fn(),
       prompt: vi.fn(),
       abort: vi.fn(),
       clear: vi.fn(),
@@ -132,6 +158,7 @@ export function createFakeApi(): FakeApi {
     sftp: mocks.sftp,
     files: mocks.files,
     monitor: mocks.monitor,
+    tunnels: mocks.tunnels,
     agent: mocks.agent,
     permission: mocks.permission,
     fonts: mocks.fonts,
@@ -158,14 +185,22 @@ export function installFakeApi(): FakeApi {
       codex: '[mcp_servers.nodeshell]'
     }
   })
-  fake.mocks.agent.status.mockResolvedValue({
-    configured: true,
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini'
-  })
+  fake.mocks.agent.status.mockResolvedValue({ ...defaultAgentStatus })
   fake.mocks.agent.prompt.mockResolvedValue(undefined)
+  fake.mocks.agent.setDefaultModel.mockResolvedValue({ ...defaultAgentStatus })
   fake.mocks.app.openExternal.mockResolvedValue(undefined)
   fake.mocks.permission.decide.mockResolvedValue(undefined)
+  fake.mocks.tunnels.discover.mockResolvedValue([])
+  fake.mocks.tunnels.list.mockResolvedValue([])
+  fake.mocks.tunnels.start.mockResolvedValue({
+    id: 'tun-1',
+    sessionId: 's1',
+    localHost: '127.0.0.1',
+    localPort: 8080,
+    remoteAddr: '0.0.0.0',
+    remotePort: 8080
+  })
+  fake.mocks.tunnels.stop.mockResolvedValue(undefined)
   ;(window as Window & { api: unknown }).api = fake.api
   return fake
 }

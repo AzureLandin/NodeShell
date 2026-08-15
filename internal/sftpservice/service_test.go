@@ -1988,6 +1988,102 @@ func TestLazyOnceReuse(t *testing.T) {
 	}
 }
 
+// cwdClient reports a home of /home/user so Chdir can pin a different cwd.
+type cwdClient struct{ *fakeClient }
+
+func (c *cwdClient) RealPath(p string) (string, error) {
+	if p == "." {
+		return "/home/user", nil
+	}
+	return p, nil
+}
+
+type cwdOpener struct {
+	mu     sync.Mutex
+	next   int
+	open   []int
+	closed []int
+}
+
+func (o *cwdOpener) NewSFTPClient(string) (sshclient.SFTPClient, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.next++
+	id := o.next
+	o.open = append(o.open, id)
+	base := &fakeClient{id: id, onClose: func(n int) {
+		o.mu.Lock()
+		o.closed = append(o.closed, n)
+		o.mu.Unlock()
+	}}
+	return &cwdClient{fakeClient: base}, nil
+}
+
+func (o *cwdOpener) snapshot() (open, closed []int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]int(nil), o.open...), append([]int(nil), o.closed...)
+}
+
+// TestInterruptKeepsCwd: Interrupt closes the cached client but must not drop
+// the session handle or its pinned cwd. A later Cwd/List reopens a client at
+// the same directory — the GUI panel's path after an Agent cancel.
+func TestInterruptKeepsCwd(t *testing.T) {
+	opener := &cwdOpener{}
+	svc := New(Deps{Opener: opener, Home: t.TempDir()})
+	const sid = "s1"
+
+	home, err := svc.Cwd(sid)
+	if err != nil || home != "/home/user" {
+		t.Fatalf("Cwd = %q (%v), want /home/user", home, err)
+	}
+	want, err := svc.Chdir(sid, "/var/log")
+	if err != nil || want != "/var/log" {
+		t.Fatalf("Chdir = %q (%v), want /var/log", want, err)
+	}
+
+	svc.Interrupt(sid)
+	open, closed := opener.snapshot()
+	if len(open) != 1 || len(closed) != 1 {
+		t.Fatalf("after Interrupt: open=%v closed=%v, want the first client closed", open, closed)
+	}
+
+	got, err := svc.Cwd(sid)
+	if err != nil || got != "/var/log" {
+		t.Fatalf("Cwd after Interrupt = %q (%v), want /var/log (not remote home)", got, err)
+	}
+	if _, err := svc.List(sid, ""); err != nil {
+		t.Fatalf("List after Interrupt: %v", err)
+	}
+	open2, closed2 := opener.snapshot()
+	if len(open2) != 2 || len(closed2) != 1 {
+		t.Fatalf("after reopen: open=%v closed=%v, want a fresh client at the kept cwd", open2, closed2)
+	}
+}
+
+// TestInterruptKeepsCwdOnLiveServer: a real SFTP chdir, then Interrupt, then
+// Cwd/List still see the subdirectory — the GUI panel regression.
+func TestInterruptKeepsCwdOnLiveServer(t *testing.T) {
+	root := t.TempDir()
+	svc, _ := newTestService(t, root, t.TempDir(), false)
+	const sid = "s1"
+	if err := svc.Mkdir(sid, "docs"); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	want, err := svc.Chdir(sid, "docs")
+	if err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	svc.Interrupt(sid)
+	got, err := svc.Cwd(sid)
+	if err != nil || got != want {
+		t.Fatalf("Cwd after Interrupt = %q (%v), want %q", got, err, want)
+	}
+	if _, err := svc.List(sid, ""); err != nil {
+		t.Fatalf("List after Interrupt: %v", err)
+	}
+}
+
 // TestConcurrentOpsShareOneClient: concurrent operations on one session never
 // open more than one client.
 func TestConcurrentOpsShareOneClient(t *testing.T) {

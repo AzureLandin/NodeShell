@@ -9,7 +9,7 @@ vi.mock('@xterm/xterm', () => {
   class MockTerminal {
     cols = 80
     rows = 24
-    options: Record<string, unknown> = {}
+    options: Record<string, unknown>
     selection = ''
     loadAddon = vi.fn()
     open = vi.fn()
@@ -20,7 +20,8 @@ vi.mock('@xterm/xterm', () => {
     clear = vi.fn()
     clearSelection = vi.fn()
     paste = vi.fn()
-    constructor() {
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options
       instances.push(this)
     }
   }
@@ -32,13 +33,27 @@ vi.mock('@xterm/addon-fit', () => {
   }
   return { FitAddon: MockFitAddon }
 })
+vi.mock('@xterm/addon-webgl', () => {
+  class MockWebglAddon {
+    onContextLoss = vi.fn(() => ({ dispose: vi.fn() }))
+    dispose = vi.fn()
+  }
+  return { WebglAddon: MockWebglAddon }
+})
+vi.mock('@xterm/addon-unicode-graphemes', () => {
+  class MockUnicodeGraphemesAddon {}
+  return { UnicodeGraphemesAddon: MockUnicodeGraphemesAddon }
+})
 
 type MockTerminal = {
+  options: Record<string, unknown>
   selection: string
   getSelection: ReturnType<typeof vi.fn>
   clear: ReturnType<typeof vi.fn>
   clearSelection: ReturnType<typeof vi.fn>
   paste: ReturnType<typeof vi.fn>
+  loadAddon: ReturnType<typeof vi.fn>
+  open: ReturnType<typeof vi.fn>
 }
 
 /** The terminal instance created by the last TerminalView render. */
@@ -66,6 +81,25 @@ describe('TerminalView context menu', () => {
     )
     return { container }
   }
+
+  it('loads grapheme width handling and the WebGL renderer after open', async () => {
+    renderView()
+    const term = await latestTerminal()
+    expect(term.options.allowProposedApi).toBe(true)
+    expect(term.open).toHaveBeenCalled()
+    const names = term.loadAddon.mock.calls.map(
+      (call: unknown[]) => (call[0] as { constructor: { name: string } }).constructor.name
+    )
+    expect(names).toContain('MockFitAddon')
+    expect(names).toContain('MockUnicodeGraphemesAddon')
+    expect(names).toContain('MockWebglAddon')
+    const openOrder = term.open.mock.invocationCallOrder[0]
+    const webglCall = term.loadAddon.mock.calls.findIndex(
+      (call: unknown[]) =>
+        (call[0] as { constructor: { name: string } }).constructor.name === 'MockWebglAddon'
+    )
+    expect(term.loadAddon.mock.invocationCallOrder[webglCall]).toBeGreaterThan(openOrder)
+  })
 
   it('opens the menu on right-click with the terminal selection state', async () => {
     const { container } = renderView()

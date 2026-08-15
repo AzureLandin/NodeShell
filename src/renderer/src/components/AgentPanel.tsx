@@ -3,9 +3,17 @@ import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowUp, faEllipsis, faStop, faTerminal } from '@fortawesome/free-solid-svg-icons'
 import { parseIpcThrownError } from '../../../shared/ipc-error'
-import type { AgentToolEvent } from '../../../shared/types'
+import type {
+  AgentConfigStatus,
+  AgentProviderStatus,
+  AgentToolEvent,
+  PermissionAskEvent,
+  PermissionDecision
+} from '../../../shared/types'
 import { AgentMarkdown } from './AgentMarkdown'
 import { AgentToolCall } from './AgentToolCall'
+import { PermissionModal } from './PermissionModal'
+import { Select, type SelectGroup } from './Select'
 
 interface AgentPanelProps {
   activeSessionId: string | null
@@ -13,6 +21,8 @@ interface AgentPanelProps {
   connected: boolean
   onOpenSettings: () => void
   onHide?: () => void
+  permissionRequest?: PermissionAskEvent | null
+  onPermissionDecide?: (decision: PermissionDecision) => void
 }
 
 type AgentEntry =
@@ -21,9 +31,55 @@ type AgentEntry =
   | { kind: 'tool'; id: string; name: string; summary: string; ok: boolean; detail?: string }
   | { kind: 'notice'; id: string; text: string; tone: 'error' | 'muted' }
 
-/** Transcripts and run flags are keyed by session so switching tabs keeps both. */
+/** Transcripts, run flags and model picks are keyed by session so switching tabs keeps them. */
 type Transcripts = Record<string, AgentEntry[]>
 type RunFlags = Record<string, boolean>
+type ModelPick = { providerId: string; model: string }
+type ModelPicks = Record<string, ModelPick>
+
+function encodePick(pick: ModelPick): string {
+  return `${pick.providerId}::${pick.model}`
+}
+
+function decodePick(value: string): ModelPick | null {
+  const i = value.indexOf('::')
+  if (i <= 0) return null
+  const providerId = value.slice(0, i)
+  const model = value.slice(i + 2)
+  if (!providerId || !model) return null
+  return { providerId, model }
+}
+
+function usableProviders(status: AgentConfigStatus): AgentProviderStatus[] {
+  return status.providers.filter((p) => p.hasKey && p.models.length > 0)
+}
+
+function pickFromStatus(status: AgentConfigStatus, current?: ModelPick): ModelPick | null {
+  const usable = usableProviders(status)
+  const stillValid = (pick: ModelPick): boolean => {
+    const p = usable.find((x) => x.id === pick.providerId)
+    return Boolean(p?.models.includes(pick.model))
+  }
+  if (current && stillValid(current)) return current
+  const fallback: ModelPick = {
+    providerId: status.defaultProviderId,
+    model: status.defaultModel
+  }
+  if (stillValid(fallback)) return fallback
+  const first = usable[0]
+  if (!first) return null
+  return { providerId: first.id, model: first.models[0] }
+}
+
+function modelGroups(status: AgentConfigStatus): SelectGroup[] {
+  return usableProviders(status).map((p) => ({
+    label: p.name,
+    options: p.models.map((m) => ({
+      value: encodePick({ providerId: p.id, model: m }),
+      label: m
+    }))
+  }))
+}
 
 let entrySeq = 0
 function nextId(): string {
@@ -93,13 +149,17 @@ export function AgentPanel({
   activeSessionTitle,
   connected,
   onOpenSettings,
-  onHide
+  onHide,
+  permissionRequest,
+  onPermissionDecide
 }: AgentPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [transcripts, setTranscripts] = useState<Transcripts>({})
   const [running, setRunning] = useState<RunFlags>({})
   const [input, setInput] = useState('')
   const [configured, setConfigured] = useState<boolean | null>(null)
+  const [agentStatus, setAgentStatus] = useState<AgentConfigStatus | null>(null)
+  const [picks, setPicks] = useState<ModelPicks>({})
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -122,14 +182,17 @@ export function AgentPanel({
     const agent = window.api.agent
     if (!agent) {
       setConfigured(false)
+      setAgentStatus(null)
       return false
     }
     try {
       const status = await agent.status()
+      setAgentStatus(status)
       setConfigured(status.configured)
       return status.configured
     } catch {
       setConfigured(false)
+      setAgentStatus(null)
       return false
     }
   }, [])
@@ -202,6 +265,22 @@ export function AgentPanel({
 
   const entries = activeSessionId ? (transcripts[activeSessionId] ?? []) : []
   const isRunning = activeSessionId ? Boolean(running[activeSessionId]) : false
+  const activePick =
+    activeSessionId && agentStatus
+      ? pickFromStatus(agentStatus, picks[activeSessionId])
+      : null
+  const groups = agentStatus ? modelGroups(agentStatus) : []
+
+  useEffect(() => {
+    if (!activeSessionId || !activePick) return
+    setPicks((prev) => {
+      const current = prev[activeSessionId]
+      if (current?.providerId === activePick.providerId && current.model === activePick.model) {
+        return prev
+      }
+      return { ...prev, [activeSessionId]: activePick }
+    })
+  }, [activeSessionId, activePick?.providerId, activePick?.model])
 
   useEffect(() => {
     const el = listRef.current
@@ -231,7 +310,24 @@ export function AgentPanel({
     runGenRef.current[activeSessionId] = genRef.current[activeSessionId] ?? 0
     setRunning((prev) => ({ ...prev, [activeSessionId]: true }))
     try {
-      await agent.prompt(activeSessionId, activeSessionTitle ?? '', text)
+      // Re-read providers on send so a key added in settings applies without
+      // remounting the panel.
+      const status = await agent.status()
+      setAgentStatus(status)
+      setConfigured(status.configured)
+      const pick = pickFromStatus(status, picks[activeSessionId] ?? activePick ?? undefined)
+      if (!pick) {
+        setRunning((prev) => ({ ...prev, [activeSessionId]: false }))
+        append(activeSessionId, {
+          kind: 'notice',
+          id: nextId(),
+          tone: 'error',
+          text: t('agent.notConfigured')
+        })
+        return
+      }
+      setPicks((prev) => ({ ...prev, [activeSessionId]: pick }))
+      await agent.prompt(activeSessionId, activeSessionTitle ?? '', text, pick.providerId, pick.model)
     } catch (e) {
       setRunning((prev) => ({ ...prev, [activeSessionId]: false }))
       // A rejection can mean the key was cleared elsewhere, so the configured
@@ -344,6 +440,14 @@ export function AgentPanel({
         )}
       </div>
 
+      {permissionRequest && onPermissionDecide ? (
+        <PermissionModal
+          variant="inline"
+          request={permissionRequest}
+          onDecide={onPermissionDecide}
+        />
+      ) : null}
+
       <div className="agent-composer">
         <div className="agent-composer-pill">
           <textarea
@@ -381,6 +485,21 @@ export function AgentPanel({
             </button>
           )}
         </div>
+        {groups.length > 0 && activePick ? (
+          <Select
+            className="agent-model-select"
+            aria-label={t('agent.model')}
+            value={encodePick(activePick)}
+            groups={groups}
+            disabled={!usable || isRunning}
+            onChange={(value) => {
+              const pick = decodePick(value)
+              if (!pick || !activeSessionId) return
+              setPicks((prev) => ({ ...prev, [activeSessionId]: pick }))
+              void window.api.agent?.setDefaultModel(pick.providerId, pick.model)
+            }}
+          />
+        ) : null}
       </div>
     </div>
   )

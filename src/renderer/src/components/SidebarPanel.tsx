@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MonitorSnapshot } from '../../../shared/types'
+import { TunnelPanel } from './TunnelPanel'
 
 interface SidebarPanelProps {
   activeSessionId: string | null
@@ -355,21 +356,57 @@ function MonitorPanel({
 }
 
 /**
- * Left sidebar: host monitor. Settings live on the icon rail; the agent lives
- * in the right-hand dock.
+ * Left sidebar: host monitor and on-demand SSH port forwards. Settings live
+ * on the icon rail; the agent lives in the right-hand dock.
  */
 export function SidebarPanel({
   activeSessionId,
   activeSessionTitle,
   connected
 }: SidebarPanelProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const [tab, setTab] = useState<'monitor' | 'ports'>('monitor')
+
   return (
     <div className="sidebar-panel">
-      <MonitorPanel
-        activeSessionId={activeSessionId}
-        activeSessionTitle={activeSessionTitle}
-        connected={connected}
-      />
+      <div className="sidebar-tabs" role="tablist" aria-label={t('sidebar.railLabel')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'monitor'}
+          className={tab === 'monitor' ? 'is-active' : undefined}
+          onClick={() => setTab('monitor')}
+        >
+          {t('monitor.title')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'ports'}
+          className={tab === 'ports' ? 'is-active' : undefined}
+          onClick={() => setTab('ports')}
+        >
+          {t('tunnels.title')}
+        </button>
+      </div>
+      <div
+        className="sidebar-tab-panel"
+        hidden={tab !== 'monitor'}
+        inert={tab !== 'monitor' ? true : undefined}
+      >
+        <MonitorPanel
+          activeSessionId={activeSessionId}
+          activeSessionTitle={activeSessionTitle}
+          connected={connected}
+        />
+      </div>
+      <div
+        className="sidebar-tab-panel"
+        hidden={tab !== 'ports'}
+        inert={tab !== 'ports' ? true : undefined}
+      >
+        <TunnelPanel activeSessionId={activeSessionId} connected={connected} />
+      </div>
     </div>
   )
 }

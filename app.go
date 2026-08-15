@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"nodeshell/internal/agent"
@@ -18,12 +19,14 @@ import (
 	"nodeshell/internal/fonts"
 	"nodeshell/internal/hosts"
 	"nodeshell/internal/knownhosts"
+	"nodeshell/internal/mcpcli"
 	"nodeshell/internal/mcpregistration"
 	"nodeshell/internal/monitor"
 	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/settings"
 	"nodeshell/internal/sftpservice"
+	"nodeshell/internal/tunnel"
 )
 
 // errBackendNotInitialised is returned by bound methods until startup has
@@ -46,19 +49,21 @@ var listFonts = fonts.List
 var newMcpRegistration = mcpregistration.New
 
 // newAgentKeyBackend is the seam for the assistant's API-key store. It is the
-// same OS keyring the host credentials use, under a fixed account name; tests
-// inject an in-memory backend so no binding test writes to the real keyring.
+// same OS keyring the host credentials use; tests inject an in-memory backend
+// so no binding test writes to the real keyring. Each provider's key is stored
+// under agent-api-key:<providerId>. The unprefixed agent-api-key account is
+// the pre-multi-provider location and is copied once on migrate.
 var newAgentKeyBackend = func() credentials.Backend { return keyring.NewBackend() }
 
-// agentKeyAccount is the keyring account holding the assistant's API key. It
-// is a fixed name, never a host id, so it can never collide with a host's
-// secret (host accounts are UUIDs).
-const agentKeyAccount = "agent-api-key"
+const (
+	agentKeyAccount       = "agent-api-key"
+	agentKeyAccountPrefix = "agent-api-key:"
+	agentKeyMaxLen        = 4096
+)
 
-// agentKeyMaxLen bounds an accepted API key. Real keys are far shorter, and
-// the OS keyring rejects large blobs anyway (Windows caps them), so an
-// oversized value is refused before it reaches the backend.
-const agentKeyMaxLen = 4096
+func agentKeyAccountFor(providerID string) string {
+	return agentKeyAccountPrefix + providerID
+}
 
 // App is the narrow Wails-bound facade. Hosts and settings methods delegate
 // to the domain stores; known-hosts stays an internal service until the SSH
@@ -82,6 +87,7 @@ type App struct {
 	sessions *sessions.Manager
 	sftp     *sftpservice.Service
 	monitor  *monitor.Service
+	tunnels  *tunnel.Service
 	// agent is the sidebar assistant; it runs tools only against sessions
 	// this manager owns, so it can never reach a host the user is not on.
 	agent *agent.Service
@@ -122,12 +128,14 @@ func NewAppWithServices(dataDir string, h *hosts.Store, s *settings.Store, k *kn
 		next:    &wailsSink{},
 		sftp:    func() *sftpservice.Service { return app.sftp },
 		monitor: func() *monitor.Service { return app.monitor },
+		tunnels: func() *tunnel.Service { return app.tunnels },
 		agent:   func() *agent.Service { return app.agent },
 		perms:   func() *permission.Service { return app.perms },
 	}
 	app.wireSessions(h, k, c, readKey, sink)
 	app.sftp = sftpservice.New(sftpservice.Deps{Opener: app.sessions, Sink: sink, Home: home})
 	app.wireMonitor(sink)
+	app.wireTunnels()
 	app.wirePermission(sink)
 	app.wireAgent(sink)
 	return app
@@ -160,23 +168,44 @@ func (a *App) wireMonitor(sink sessions.EventSink) {
 	a.monitor = monitor.New(monitor.Deps{Execer: a.sessions, Sink: sink})
 }
 
-// wireAgent builds the sidebar assistant over the same session execer and
-// SFTP service the GUI uses, so its tools are bounded by the limits those
-// services already enforce. Without a session manager there is nothing to
-// operate on, so the agent stays nil and its bindings fail observably. The
-// config loader is resolved per prompt, which is how a key or model changed in
-// settings applies without rebuilding the service.
+// wireTunnels builds the local-forward service over the same session manager
+// used for exec and SFTP. Without a sessions manager there is nothing to
+// forward through, so the service stays nil and the bindings fail observably.
+func (a *App) wireTunnels() {
+	if a.sessions == nil {
+		return
+	}
+	a.tunnels = tunnel.New(tunnel.Deps{
+		Execer: a.sessions,
+		Dialer: a.sessions,
+		Ready:  a.sessions,
+	})
+}
+
+// wireAgent builds the sidebar assistant over a guest MCP runtime on the GUI
+// session manager and SFTP service. The BoundCaller injects the current tab's
+// session so the model cannot pick another host or a local path. Without a
+// session manager there is nothing to operate on, so the agent stays nil and
+// its bindings fail observably. Endpoint config is resolved per prompt from
+// the named provider list, which is how a key or model changed in settings
+// applies without rebuilding the service. The guest runtime never starts an
+// idle reaper.
 func (a *App) wireAgent(sink sessions.EventSink) {
 	if a.sessions == nil || a.sftp == nil {
 		return
 	}
-	a.agent = agent.New(agent.Deps{
-		Execer: a.sessions,
-		Files:  a.sftp,
-		Sink:   sink,
-		Config: a.agentConfig,
-		Auth:   a.perms,
+	rt := mcpcli.New(mcpcli.Deps{
+		Manager:       a.sessions,
+		SFTP:          a.sftp,
+		Auth:          a.perms,
+		GuestSessions: true,
 	})
+	a.agent = agent.New(agent.Deps{
+		Tools: &agent.BoundCaller{MCP: rt},
+		Sink:  sink,
+	})
+	// Do not StartReaper: this runtime shares GUI sessions, and idle reap
+	// would disconnect the tab the user is looking at.
 }
 
 // wirePermission builds the in-app permission gate over the same Wails sink
@@ -207,15 +236,17 @@ func (a *App) permissionPolicy() permission.Policy {
 }
 
 // disposeSink forwards every event to the next sink and, on session:closed,
-// disposes the session's cached SFTP client, stops its monitor poller and
-// drops its agent conversation — a torn-down SSH session can never leave a
-// stale SFTP channel, a polling goroutine or a running agent loop behind. The
+// disposes the session's cached SFTP client, stops its monitor poller,
+// closes its local port forwards and drops its agent conversation — a
+// torn-down SSH session can never leave a stale SFTP channel, a polling
+// goroutine, a listening local port or a running agent loop behind. The
 // getters resolve lazily so wiring order (sessions before sftp/monitor/agent)
 // never matters.
 type disposeSink struct {
 	next    sessions.EventSink
 	sftp    func() *sftpservice.Service
 	monitor func() *monitor.Service
+	tunnels func() *tunnel.Service
 	agent   func() *agent.Service
 	perms   func() *permission.Service
 }
@@ -243,6 +274,11 @@ func (s *disposeSink) disposeSession(sessionID string) {
 	if s.monitor != nil {
 		if m := s.monitor(); m != nil {
 			m.Dispose(sessionID)
+		}
+	}
+	if s.tunnels != nil {
+		if tun := s.tunnels(); tun != nil {
+			tun.Dispose(sessionID)
 		}
 	}
 	// A closed session's conversation is dropped with it, so a reconnect
@@ -341,12 +377,14 @@ func (a *App) startup(ctx context.Context) {
 		next:    &wailsSink{ctx: ctx},
 		sftp:    func() *sftpservice.Service { return a.sftp },
 		monitor: func() *monitor.Service { return a.monitor },
+		tunnels: func() *tunnel.Service { return a.tunnels },
 		agent:   func() *agent.Service { return a.agent },
 		perms:   func() *permission.Service { return a.perms },
 	}
 	a.wireSessions(a.hosts, a.known, a.creds, a.readKey, sink)
 	a.sftp = sftpservice.New(sftpservice.Deps{Opener: a.sessions, Sink: sink, Home: home})
 	a.wireMonitor(sink)
+	a.wireTunnels()
 	a.wirePermission(sink)
 	a.wireAgent(sink)
 	a.registerFileDrop(ctx)
@@ -361,6 +399,7 @@ func (a *App) shutdown(context.Context) {
 	m := a.sessions
 	svc := a.sftp
 	mon := a.monitor
+	tun := a.tunnels
 	ag := a.agent
 	a.mu.RUnlock()
 	if ag != nil {
@@ -368,6 +407,9 @@ func (a *App) shutdown(context.Context) {
 	}
 	if mon != nil {
 		mon.DisposeAll()
+	}
+	if tun != nil {
+		tun.DisposeAll()
 	}
 	if m != nil {
 		m.DisposeAll()
@@ -718,6 +760,53 @@ func (a *App) MonitorSetActive(sessionID, title string) error {
 	return nil
 }
 
+func (a *App) tunnelService() (*tunnel.Service, error) {
+	a.mu.RLock()
+	svc := a.tunnels
+	a.mu.RUnlock()
+	if svc == nil {
+		return nil, errBackendNotInitialised
+	}
+	return svc, nil
+}
+
+// TunnelsDiscover lists TCP ports currently listening on the remote session.
+func (a *App) TunnelsDiscover(sessionID string) ([]tunnel.Listener, error) {
+	svc, err := a.tunnelService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.Discover(context.Background(), sessionID)
+}
+
+// TunnelsStart opens a local 127.0.0.1 listener that forwards to the remote
+// address and port over the SSH session.
+func (a *App) TunnelsStart(sessionID, remoteAddr string, remotePort int) (tunnel.Tunnel, error) {
+	svc, err := a.tunnelService()
+	if err != nil {
+		return tunnel.Tunnel{}, err
+	}
+	return svc.Start(sessionID, remoteAddr, remotePort)
+}
+
+// TunnelsStop closes one local forward. Unknown ids are a no-op success.
+func (a *App) TunnelsStop(sessionID, tunnelID string) error {
+	svc, err := a.tunnelService()
+	if err != nil {
+		return err
+	}
+	return svc.Stop(sessionID, tunnelID)
+}
+
+// TunnelsList returns the live local forwards for the session.
+func (a *App) TunnelsList(sessionID string) ([]tunnel.Tunnel, error) {
+	svc, err := a.tunnelService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.List(sessionID), nil
+}
+
 // --- SFTP bindings (ElectronApi.sftp contract) ---
 
 func (a *App) sftpService() (*sftpservice.Service, error) {
@@ -913,24 +1002,34 @@ func (a *App) SftpWriteText(sessionID, remotePath, content string) (SftpTextPath
 
 // --- Agent bindings (ElectronApi.agent contract) ---
 
-// AgentConfigStatus is the AgentStatus/AgentSetConfig payload. The API key is
-// never returned, only whether one is stored, so the renderer can render a
-// configured state without ever holding the secret.
+// AgentProviderStatus is one named provider as returned to the renderer. The
+// API key is never included, only whether one is stored.
+type AgentProviderStatus struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	BaseURL string   `json:"baseUrl"`
+	Models  []string `json:"models"`
+	HasKey  bool     `json:"hasKey"`
+}
+
+// AgentConfigStatus is the AgentStatus payload. The API key is never
+// returned, only whether each provider has one stored.
 type AgentConfigStatus struct {
-	Configured bool   `json:"configured"`
-	BaseURL    string `json:"baseUrl"`
-	Model      string `json:"model"`
+	Configured        bool                  `json:"configured"`
+	Providers         []AgentProviderStatus `json:"providers"`
+	DefaultProviderID string                `json:"defaultProviderId"`
+	DefaultModel      string                `json:"defaultModel"`
 }
 
-// AgentConfigPatch mirrors the renderer's setConfig payload; nil fields are
-// left unchanged. An APIKey of "" clears the stored key.
-type AgentConfigPatch struct {
-	BaseURL *string `json:"baseUrl"`
-	Model   *string `json:"model"`
-	APIKey  *string `json:"apiKey"`
+// AgentProviderInput is the upsert payload. An empty ID creates a provider.
+type AgentProviderInput struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	BaseURL string   `json:"baseUrl"`
+	Models  []string `json:"models"`
 }
 
-// agentKeyBackend returns the keyring backend for the assistant's API key.
+// agentKeyBackend returns the keyring backend for the assistant's API keys.
 func (a *App) agentKeyBackend() (credentials.Backend, error) {
 	a.mu.RLock()
 	keys := a.agentKeys
@@ -941,15 +1040,15 @@ func (a *App) agentKeyBackend() (credentials.Backend, error) {
 	return keys, nil
 }
 
-// agentAPIKey reads the stored key; a missing entry is an empty key, not an
-// error, so an unconfigured assistant reports "not configured" instead of a
-// keyring failure. The value is returned to callers inside this process only.
-func (a *App) agentAPIKey() (string, error) {
+// agentAPIKeyFor reads one provider's stored key; a missing entry is an empty
+// key, not an error, so an unconfigured assistant reports "not configured"
+// instead of a keyring failure. The value stays inside this process.
+func (a *App) agentAPIKeyFor(providerID string) (string, error) {
 	keys, err := a.agentKeyBackend()
 	if err != nil {
 		return "", err
 	}
-	value, err := keys.Get(credentials.ServiceName, agentKeyAccount)
+	value, err := keys.Get(credentials.ServiceName, agentKeyAccountFor(providerID))
 	if err != nil {
 		if errors.Is(err, credentials.ErrNotFound) {
 			return "", nil
@@ -966,90 +1065,366 @@ type agentKeyError struct{ message string }
 func (e *agentKeyError) Error() string     { return e.message }
 func (e *agentKeyError) ErrorCode() string { return apperror.Unknown }
 
-// agentConfig is the agent service's ConfigLoader: the non-secret half comes
-// from settings.json, the key from the OS keyring. A missing key is reported
-// as agent.ErrNotConfigured so the prompt is rejected before a request is
-// built.
-func (a *App) agentConfig() (agent.Config, error) {
+func (a *App) settingsStore() (*settings.Store, error) {
 	a.mu.RLock()
 	s := a.settings
 	a.mu.RUnlock()
 	if s == nil {
-		return agent.Config{}, errBackendNotInitialised
+		return nil, errBackendNotInitialised
+	}
+	return s, nil
+}
+
+// migrateAgentProviders copies a pre-multi-provider key onto the legacy
+// provider account and persists a synthesised provider list when the file
+// still uses the old single-endpoint fields.
+func (a *App) migrateAgentProviders() error {
+	s, err := a.settingsStore()
+	if err != nil {
+		return err
+	}
+	keys, err := a.agentKeyBackend()
+	if err != nil {
+		return err
+	}
+	legacyKey, err := keys.Get(credentials.ServiceName, agentKeyAccount)
+	if err != nil && !errors.Is(err, credentials.ErrNotFound) {
+		return &agentKeyError{message: "Failed to read the agent API key"}
+	}
+	if err == nil && legacyKey != "" {
+		dest := agentKeyAccountFor(settings.LegacyProviderID)
+		_, destErr := keys.Get(credentials.ServiceName, dest)
+		if destErr != nil && !errors.Is(destErr, credentials.ErrNotFound) {
+			return &agentKeyError{message: "Failed to read the agent API key"}
+		}
+		if errors.Is(destErr, credentials.ErrNotFound) {
+			if err := keys.Set(credentials.ServiceName, dest, legacyKey); err != nil {
+				return &agentKeyError{message: "Failed to store the agent API key"}
+			}
+		}
+		if err := keys.Delete(credentials.ServiceName, agentKeyAccount); err != nil &&
+			!errors.Is(err, credentials.ErrNotFound) {
+			return &agentKeyError{message: "Failed to clear the agent API key"}
+		}
+	}
+
+	current, err := s.Get()
+	if err != nil {
+		return err
+	}
+	if current.AgentProvidersPresent {
+		return nil
+	}
+	providers := current.AgentProviders
+	if len(providers) == 0 {
+		if legacyKey == "" {
+			return nil
+		}
+		providers = []settings.AgentProvider{{
+			ID:      settings.LegacyProviderID,
+			Name:    settings.LegacyProviderName,
+			BaseURL: current.AgentBaseURL,
+			Models:  []string{current.AgentModel},
+		}}
+	}
+	defaultID, defaultModel := current.AgentDefaultProviderID, current.AgentDefaultModel
+	if _, err := s.Set(settings.Patch{
+		AgentProviders:         &providers,
+		AgentDefaultProviderID: &defaultID,
+		AgentDefaultModel:      &defaultModel,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func providerHasModel(p settings.AgentProvider, model string) bool {
+	for _, m := range p.Models {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+func findProvider(providers []settings.AgentProvider, id string) (settings.AgentProvider, bool) {
+	for _, p := range providers {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return settings.AgentProvider{}, false
+}
+
+// agentConfigFor resolves one named provider + model into the endpoint config
+// the agent loop needs. Unknown ids and missing keys fail before a run starts.
+func (a *App) agentConfigFor(providerID, model string) (agent.Config, error) {
+	if err := a.migrateAgentProviders(); err != nil {
+		return agent.Config{}, err
+	}
+	s, err := a.settingsStore()
+	if err != nil {
+		return agent.Config{}, err
 	}
 	current, err := s.Get()
 	if err != nil {
 		return agent.Config{}, err
 	}
-	key, err := a.agentAPIKey()
+	p, ok := findProvider(current.AgentProviders, strings.TrimSpace(providerID))
+	if !ok || !providerHasModel(p, strings.TrimSpace(model)) {
+		return agent.Config{}, &agentKeyError{message: "Unknown agent model"}
+	}
+	key, err := a.agentAPIKeyFor(p.ID)
 	if err != nil {
 		return agent.Config{}, err
 	}
 	if key == "" {
 		return agent.Config{}, agent.ErrNotConfigured
 	}
-	return agent.Config{BaseURL: current.AgentBaseURL, Model: current.AgentModel, APIKey: key}, nil
+	return agent.Config{BaseURL: p.BaseURL, Model: strings.TrimSpace(model), APIKey: key}, nil
 }
 
-// AgentStatus reports the assistant's endpoint and whether an API key is
+func (a *App) agentStatusFrom(current settings.AppSettings) (AgentConfigStatus, error) {
+	views := make([]AgentProviderStatus, 0, len(current.AgentProviders))
+	configured := false
+	for _, p := range current.AgentProviders {
+		key, err := a.agentAPIKeyFor(p.ID)
+		if err != nil {
+			return AgentConfigStatus{}, err
+		}
+		hasKey := key != ""
+		if hasKey && len(p.Models) > 0 {
+			configured = true
+		}
+		models := p.Models
+		if models == nil {
+			models = []string{}
+		}
+		views = append(views, AgentProviderStatus{
+			ID:      p.ID,
+			Name:    p.Name,
+			BaseURL: p.BaseURL,
+			Models:  models,
+			HasKey:  hasKey,
+		})
+	}
+	defaultID, defaultModel := current.AgentDefaultProviderID, current.AgentDefaultModel
+	if p, ok := findProvider(current.AgentProviders, defaultID); !ok || !providerHasModel(p, defaultModel) {
+		defaultID, defaultModel = "", ""
+		for _, v := range views {
+			if v.HasKey && len(v.Models) > 0 {
+				defaultID, defaultModel = v.ID, v.Models[0]
+				break
+			}
+		}
+		if defaultID == "" && len(current.AgentProviders) > 0 && len(current.AgentProviders[0].Models) > 0 {
+			defaultID, defaultModel = current.AgentProviders[0].ID, current.AgentProviders[0].Models[0]
+		}
+	}
+	if views == nil {
+		views = []AgentProviderStatus{}
+	}
+	return AgentConfigStatus{
+		Configured:        configured,
+		Providers:         views,
+		DefaultProviderID: defaultID,
+		DefaultModel:      defaultModel,
+	}, nil
+}
+
+// AgentStatus reports the named providers and whether each has an API key
 // stored (adapter agent.status).
 func (a *App) AgentStatus() (AgentConfigStatus, error) {
-	a.mu.RLock()
-	s := a.settings
-	a.mu.RUnlock()
-	if s == nil {
-		return AgentConfigStatus{}, errBackendNotInitialised
+	if err := a.migrateAgentProviders(); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	s, err := a.settingsStore()
+	if err != nil {
+		return AgentConfigStatus{}, err
 	}
 	current, err := s.Get()
 	if err != nil {
 		return AgentConfigStatus{}, err
 	}
-	key, err := a.agentAPIKey()
+	return a.agentStatusFrom(current)
+}
+
+// AgentUpsertProvider creates or updates one named provider (never the key).
+func (a *App) AgentUpsertProvider(input AgentProviderInput) (AgentConfigStatus, error) {
+	if err := a.migrateAgentProviders(); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	s, err := a.settingsStore()
 	if err != nil {
 		return AgentConfigStatus{}, err
 	}
-	return AgentConfigStatus{
-		Configured: key != "",
-		BaseURL:    current.AgentBaseURL,
-		Model:      current.AgentModel,
-	}, nil
+	current, err := s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	id := strings.TrimSpace(input.ID)
+	creating := id == ""
+	if creating {
+		if len(current.AgentProviders) >= settings.AgentProviderMax {
+			return AgentConfigStatus{}, &agentKeyError{message: "Too many agent providers"}
+		}
+		id = uuid.NewString()
+	}
+	next, ok := settings.NormalizeProvider(settings.AgentProvider{
+		ID:      id,
+		Name:    input.Name,
+		BaseURL: input.BaseURL,
+		Models:  input.Models,
+	})
+	if !ok {
+		return AgentConfigStatus{}, &agentKeyError{message: "Invalid agent provider"}
+	}
+	providers := append([]settings.AgentProvider(nil), current.AgentProviders...)
+	replaced := false
+	for i, p := range providers {
+		if p.ID == next.ID {
+			providers[i] = next
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		if len(providers) >= settings.AgentProviderMax {
+			return AgentConfigStatus{}, &agentKeyError{message: "Too many agent providers"}
+		}
+		providers = append(providers, next)
+	}
+	defaultID, defaultModel := current.AgentDefaultProviderID, current.AgentDefaultModel
+	if creating && defaultID == "" && len(next.Models) > 0 {
+		defaultID, defaultModel = next.ID, next.Models[0]
+	}
+	if _, err := s.Set(settings.Patch{
+		AgentProviders:         &providers,
+		AgentDefaultProviderID: &defaultID,
+		AgentDefaultModel:      &defaultModel,
+	}); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	current, err = s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	return a.agentStatusFrom(current)
 }
 
-// AgentSetConfig persists the endpoint fields in settings.json and the API key
-// in the OS keyring, then returns the resulting status. The key is written
-// only to the keyring — never to settings.json, an event or a log — and an
-// empty key clears the stored entry.
-func (a *App) AgentSetConfig(patch AgentConfigPatch) (AgentConfigStatus, error) {
-	a.mu.RLock()
-	s := a.settings
-	a.mu.RUnlock()
-	if s == nil {
-		return AgentConfigStatus{}, errBackendNotInitialised
+// AgentDeleteProvider removes a provider and its keyring entry.
+func (a *App) AgentDeleteProvider(id string) (AgentConfigStatus, error) {
+	if err := a.migrateAgentProviders(); err != nil {
+		return AgentConfigStatus{}, err
 	}
-	if patch.APIKey != nil {
-		keys, err := a.agentKeyBackend()
-		if err != nil {
-			return AgentConfigStatus{}, err
-		}
-		key := strings.TrimSpace(*patch.APIKey)
-		if len(key) > agentKeyMaxLen {
-			return AgentConfigStatus{}, &agentKeyError{message: "The agent API key is too long"}
-		}
-		if key == "" {
-			if err := keys.Delete(credentials.ServiceName, agentKeyAccount); err != nil &&
-				!errors.Is(err, credentials.ErrNotFound) {
-				return AgentConfigStatus{}, &agentKeyError{message: "Failed to clear the agent API key"}
-			}
-		} else if err := keys.Set(credentials.ServiceName, agentKeyAccount, key); err != nil {
-			return AgentConfigStatus{}, &agentKeyError{message: "Failed to store the agent API key"}
-		}
+	s, err := a.settingsStore()
+	if err != nil {
+		return AgentConfigStatus{}, err
 	}
-	if patch.BaseURL != nil || patch.Model != nil {
-		if _, err := s.Set(settings.Patch{AgentBaseURL: patch.BaseURL, AgentModel: patch.Model}); err != nil {
-			return AgentConfigStatus{}, err
-		}
+	current, err := s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
 	}
-	return a.AgentStatus()
+	id = strings.TrimSpace(id)
+	providers := make([]settings.AgentProvider, 0, len(current.AgentProviders))
+	found := false
+	for _, p := range current.AgentProviders {
+		if p.ID == id {
+			found = true
+			continue
+		}
+		providers = append(providers, p)
+	}
+	if !found {
+		return AgentConfigStatus{}, &agentKeyError{message: "Unknown agent provider"}
+	}
+	if _, err := s.Set(settings.Patch{AgentProviders: &providers}); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	keys, err := a.agentKeyBackend()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	if err := keys.Delete(credentials.ServiceName, agentKeyAccountFor(id)); err != nil &&
+		!errors.Is(err, credentials.ErrNotFound) {
+		return AgentConfigStatus{}, &agentKeyError{message: "Failed to clear the agent API key"}
+	}
+	current, err = s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	return a.agentStatusFrom(current)
+}
+
+// AgentSetProviderKey stores or clears one provider's API key. An empty key
+// clears the stored entry.
+func (a *App) AgentSetProviderKey(id, apiKey string) (AgentConfigStatus, error) {
+	if err := a.migrateAgentProviders(); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	s, err := a.settingsStore()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	current, err := s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	id = strings.TrimSpace(id)
+	if _, ok := findProvider(current.AgentProviders, id); !ok {
+		return AgentConfigStatus{}, &agentKeyError{message: "Unknown agent provider"}
+	}
+	keys, err := a.agentKeyBackend()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	key := strings.TrimSpace(apiKey)
+	if len(key) > agentKeyMaxLen {
+		return AgentConfigStatus{}, &agentKeyError{message: "The agent API key is too long"}
+	}
+	account := agentKeyAccountFor(id)
+	if key == "" {
+		if err := keys.Delete(credentials.ServiceName, account); err != nil &&
+			!errors.Is(err, credentials.ErrNotFound) {
+			return AgentConfigStatus{}, &agentKeyError{message: "Failed to clear the agent API key"}
+		}
+	} else if err := keys.Set(credentials.ServiceName, account, key); err != nil {
+		return AgentConfigStatus{}, &agentKeyError{message: "Failed to store the agent API key"}
+	}
+	return a.agentStatusFrom(current)
+}
+
+// AgentSetDefaultModel records the conversation picker's last choice so a new
+// SSH tab starts on the same model.
+func (a *App) AgentSetDefaultModel(providerID, model string) (AgentConfigStatus, error) {
+	if err := a.migrateAgentProviders(); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	s, err := a.settingsStore()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	current, err := s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	providerID = strings.TrimSpace(providerID)
+	model = strings.TrimSpace(model)
+	p, ok := findProvider(current.AgentProviders, providerID)
+	if !ok || !providerHasModel(p, model) {
+		return AgentConfigStatus{}, &agentKeyError{message: "Unknown agent model"}
+	}
+	if _, err := s.Set(settings.Patch{
+		AgentDefaultProviderID: &providerID,
+		AgentDefaultModel:      &model,
+	}); err != nil {
+		return AgentConfigStatus{}, err
+	}
+	current, err = s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	return a.agentStatusFrom(current)
 }
 
 // agentService returns the wired assistant.
@@ -1063,18 +1438,23 @@ func (a *App) agentService() (*agent.Service, error) {
 	return svc, nil
 }
 
-// AgentPrompt accepts one message for the session's conversation. It returns
-// an error only when the prompt is rejected up front (not configured, empty,
-// a run already in flight); an accepted run reports progress through the
-// agent:delta/tool/error events and is always closed by agent:done. title is
-// the session's tab label, so the assistant names the host the way the UI
-// does.
-func (a *App) AgentPrompt(sessionID, title, text string) error {
+// AgentPrompt accepts one message for the session's conversation. providerID
+// and model select which named endpoint this send uses; the transcript is
+// kept. It returns an error only when the prompt is rejected up front (not
+// configured, unknown model, empty, a run already in flight); an accepted
+// run reports progress through the agent:delta/tool/error events and is
+// always closed by agent:done. title is the session's tab label, so the
+// assistant names the host the way the UI does.
+func (a *App) AgentPrompt(sessionID, title, text, providerID, model string) error {
 	svc, err := a.agentService()
 	if err != nil {
 		return err
 	}
-	return svc.Prompt(sessionID, title, text)
+	cfg, err := a.agentConfigFor(providerID, model)
+	if err != nil {
+		return err
+	}
+	return svc.Prompt(sessionID, title, text, cfg)
 }
 
 // AgentAbort stops the session's in-flight run; the run still closes with an

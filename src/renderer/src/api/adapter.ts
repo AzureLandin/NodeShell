@@ -1,10 +1,10 @@
 import {
   IPC,
-  type AgentConfigPatch,
   type AgentConfigStatus,
   type AgentDeltaEvent,
   type AgentDoneEvent,
   type AgentErrorEvent,
+  type AgentProviderInput,
   type AgentToolEvent,
   type AppSettings,
   type ConnectOptions,
@@ -22,7 +22,9 @@ import {
   type SessionClosedEvent,
   type SessionDataEvent,
   type SessionErrorEvent,
-  type SftpTransferProgressEvent
+  type SftpTransferProgressEvent,
+  type Tunnel,
+  type TunnelListener
 } from '../../../shared/types'
 import type { ApiBridge } from './bridge'
 
@@ -181,12 +183,33 @@ export function createApi(bridge: ApiBridge): ElectronApi {
       onUpdate: (cb: (event: MonitorUpdateEvent) => void): (() => void) =>
         events.on<MonitorUpdateEvent>(IPC.monitorUpdate, cb)
     },
+    tunnels: {
+      discover: (sessionId: string): Promise<TunnelListener[]> =>
+        bridge.call<TunnelListener[]>('TunnelsDiscover', sessionId),
+      start: (sessionId: string, remoteAddr: string, remotePort: number): Promise<Tunnel> =>
+        bridge.call<Tunnel>('TunnelsStart', sessionId, remoteAddr, remotePort),
+      stop: (sessionId: string, tunnelId: string): Promise<void> =>
+        bridge.call<void>('TunnelsStop', sessionId, tunnelId),
+      list: (sessionId: string): Promise<Tunnel[]> =>
+        bridge.call<Tunnel[]>('TunnelsList', sessionId)
+    },
     agent: {
       status: (): Promise<AgentConfigStatus> => bridge.call<AgentConfigStatus>('AgentStatus'),
-      setConfig: (patch: AgentConfigPatch): Promise<AgentConfigStatus> =>
-        bridge.call<AgentConfigStatus>('AgentSetConfig', patch),
-      prompt: (sessionId: string, title: string, text: string): Promise<void> =>
-        bridge.call<void>('AgentPrompt', sessionId, title, text),
+      upsertProvider: (input: AgentProviderInput): Promise<AgentConfigStatus> =>
+        bridge.call<AgentConfigStatus>('AgentUpsertProvider', input),
+      deleteProvider: (id: string): Promise<AgentConfigStatus> =>
+        bridge.call<AgentConfigStatus>('AgentDeleteProvider', id),
+      setProviderKey: (id: string, apiKey: string): Promise<AgentConfigStatus> =>
+        bridge.call<AgentConfigStatus>('AgentSetProviderKey', id, apiKey),
+      setDefaultModel: (providerId: string, model: string): Promise<AgentConfigStatus> =>
+        bridge.call<AgentConfigStatus>('AgentSetDefaultModel', providerId, model),
+      prompt: (
+        sessionId: string,
+        title: string,
+        text: string,
+        providerId: string,
+        model: string
+      ): Promise<void> => bridge.call<void>('AgentPrompt', sessionId, title, text, providerId, model),
       abort: (sessionId: string): Promise<void> => bridge.call<void>('AgentAbort', sessionId),
       clear: (sessionId: string): Promise<void> => bridge.call<void>('AgentClear', sessionId),
       onDelta: (cb: (event: AgentDeltaEvent) => void): (() => void) =>

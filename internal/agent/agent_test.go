@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"nodeshell/internal/apperror"
+	"nodeshell/internal/mcpcli"
 	"nodeshell/internal/permission"
 	"nodeshell/internal/sftpservice"
 )
@@ -98,73 +99,105 @@ func (s *recSink) done() []DoneEvent {
 	return out
 }
 
-type execCall struct {
+type toolCallRec struct {
 	sessionID string
+	name      string
 	command   string
 	timeout   time.Duration
+	args      map[string]any
 }
 
-type fakeExecer struct {
+type fakeTools struct {
 	mu    sync.Mutex
-	calls []execCall
+	calls []toolCallRec
 	out   string
 	err   error
-	// block, when set, holds Exec until the context is cancelled, standing in
-	// for a long-running remote command.
+	// block, when set, holds a bash call until the context is cancelled.
 	block bool
-	// park, when non-nil, holds Exec until the channel is closed, ignoring
-	// context cancel — used to prove DisposeAll joins the run goroutine.
+	// park, when non-nil, holds a bash call until the channel is closed.
 	park <-chan struct{}
-}
 
-func (f *fakeExecer) Exec(sessionID string, ctx context.Context, command string, timeout time.Duration) (string, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, execCall{sessionID: sessionID, command: command, timeout: timeout})
-	block, park, out, err := f.block, f.park, f.out, f.err
-	f.mu.Unlock()
-	if park != nil {
-		<-park
-		return out, err
-	}
-	if block {
-		<-ctx.Done()
-		return "", ctx.Err()
-	}
-	return out, err
-}
-
-func (f *fakeExecer) recorded() []execCall {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]execCall(nil), f.calls...)
-}
-
-type fakeFiles struct {
-	mu        sync.Mutex
 	entries   []sftpservice.Entry
 	content   string
 	written   string
 	writePath string
-	readMax   int64
-	err       error
+	auth      permission.Authorizer
 }
 
-func (f *fakeFiles) List(string, string) ([]sftpservice.Entry, error) {
-	return f.entries, f.err
-}
+func (f *fakeTools) Call(ctx context.Context, sessionID, title, name string, args map[string]any) (any, error) {
+	if err := f.authorize(ctx, sessionID, title, name, args); err != nil {
+		return nil, err
+	}
 
-func (f *fakeFiles) ReadText(_, remotePath string, maxBytes int64) (string, string, error) {
+	command := stringFromArgs(args, "command")
+	timeout := time.Duration(intFromArgs(args, "timeoutMs")) * time.Millisecond
+	rec := toolCallRec{sessionID: sessionID, name: name, command: command, timeout: timeout, args: args}
+
 	f.mu.Lock()
-	f.readMax = maxBytes
+	f.calls = append(f.calls, rec)
+	block, park, out, callErr := f.block, f.park, f.out, f.err
+	entries, content := f.entries, f.content
 	f.mu.Unlock()
-	return remotePath, f.content, f.err
+
+	switch name {
+	case toolBash:
+		if park != nil {
+			<-park
+			return out, callErr
+		}
+		if block {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return out, callErr
+	case toolSftpList:
+		if callErr != nil {
+			return nil, callErr
+		}
+		return mcpcli.SftpListResult{Entries: entries}, nil
+	case toolSftpRead:
+		if callErr != nil {
+			return nil, callErr
+		}
+		return mcpcli.SftpReadResult{Path: stringFromArgs(args, "path"), Content: content}, nil
+	case toolSftpWrite:
+		if callErr != nil {
+			return nil, callErr
+		}
+		path := stringFromArgs(args, "path")
+		body := stringFromArgs(args, "content")
+		f.mu.Lock()
+		f.written, f.writePath = body, path
+		f.mu.Unlock()
+		return mcpcli.SftpWriteResult{OK: true, Path: path}, nil
+	default:
+		return nil, errf(apperror.Unknown, "unknown tool")
+	}
 }
 
-func (f *fakeFiles) WriteText(_, remotePath, content string, _ int64) (string, error) {
+func (f *fakeTools) authorize(ctx context.Context, sessionID, title, name string, args map[string]any) error {
+	if f.auth == nil {
+		return nil
+	}
+	summary := toolSummary(name, args)
+	detail := ""
+	if name == toolSftpWrite {
+		detail = fmt.Sprintf("%d bytes", len(stringFromArgs(args, "content")))
+	}
+	return f.auth.Authorize(ctx, permission.Request{
+		Source:    permission.SourceAgent,
+		Tool:      name,
+		SessionID: sessionID,
+		Title:     title,
+		Summary:   permission.Truncate(summary),
+		Detail:    detail,
+	})
+}
+
+func (f *fakeTools) recorded() []toolCallRec {
 	f.mu.Lock()
-	f.written, f.writePath = content, remotePath
-	f.mu.Unlock()
-	return remotePath, f.err
+	defer f.mu.Unlock()
+	return append([]toolCallRec(nil), f.calls...)
 }
 
 // --- fake endpoint ---
@@ -248,8 +281,7 @@ func jsonString(s string) string {
 type harness struct {
 	svc    *Service
 	sink   *recSink
-	exec   *fakeExecer
-	files  *fakeFiles
+	tools  *fakeTools
 	server *turnServer
 	url    string
 }
@@ -262,18 +294,13 @@ func newHarness(t *testing.T, turns []sseTurn, tweak func(*Deps)) *harness {
 
 	h := &harness{
 		sink:   &recSink{},
-		exec:   &fakeExecer{out: "ok"},
-		files:  &fakeFiles{},
+		tools:  &fakeTools{out: "ok"},
 		server: ts,
 		url:    srv.URL,
 	}
 	deps := Deps{
-		Execer: h.exec,
-		Files:  h.files,
-		Sink:   h.sink,
-		Config: func() (Config, error) {
-			return Config{BaseURL: srv.URL, Model: "test-model", APIKey: "sk-test-key"}, nil
-		},
+		Tools:          h.tools,
+		Sink:           h.sink,
 		RequestTimeout: 5 * time.Second,
 		ExecTimeout:    2 * time.Second,
 	}
@@ -283,6 +310,14 @@ func newHarness(t *testing.T, turns []sseTurn, tweak func(*Deps)) *harness {
 	h.svc = New(deps)
 	t.Cleanup(h.svc.DisposeAll)
 	return h
+}
+
+func (h *harness) cfg() Config {
+	return Config{BaseURL: h.url, Model: "test-model", APIKey: "sk-test-key"}
+}
+
+func (h *harness) prompt(sessionID, title, text string) error {
+	return h.svc.Prompt(sessionID, title, text, h.cfg())
 }
 
 // waitDone blocks until n runs have closed; every accepted prompt must emit
@@ -308,7 +343,7 @@ func (h *harness) waitDone(t *testing.T, n int) {
 func TestPromptStreamsTextAndClosesOnce(t *testing.T) {
 	h := newHarness(t, []sseTurn{{deltas: []string{"Disk ", "looks ", "fine."}}}, nil)
 
-	if err := h.svc.Prompt("s1", "prod-web", "how is the disk?"); err != nil {
+	if err := h.prompt("s1", "prod-web", "how is the disk?"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -334,14 +369,14 @@ func TestToolCallRunsOnPromptSessionAndLoopsBack(t *testing.T) {
 		{deltas: []string{"checking"}, calls: tool(toolBash, `{"command":"df -h"}`)},
 		{deltas: []string{"all good"}},
 	}, nil)
-	h.exec.out = "/dev/sda1 40% /"
+	h.tools.out = "/dev/sda1 40% /"
 
-	if err := h.svc.Prompt("s7", "prod-web", "check disk"); err != nil {
+	if err := h.prompt("s7", "prod-web", "check disk"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	calls := h.exec.recorded()
+	calls := h.tools.recorded()
 	if len(calls) != 1 {
 		t.Fatalf("exec calls = %d, want 1", len(calls))
 	}
@@ -380,6 +415,25 @@ func TestToolCallRunsOnPromptSessionAndLoopsBack(t *testing.T) {
 	}
 }
 
+// A sessionId the model stuffed into the tool arguments is ignored: the loop
+// always addresses the session Prompt named.
+func TestToolCallIgnoresSessionIdInArguments(t *testing.T) {
+	h := newHarness(t, []sseTurn{
+		{calls: tool(toolBash, `{"command":"id","sessionId":"other-host"}`)},
+		{deltas: []string{"ok"}},
+	}, nil)
+
+	if err := h.prompt("s7", "prod-web", "whoami"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	h.waitDone(t, 1)
+
+	calls := h.tools.recorded()
+	if len(calls) != 1 || calls[0].sessionID != "s7" {
+		t.Fatalf("tool session = %+v, want the prompt's s7", calls)
+	}
+}
+
 // A model-supplied timeout is clamped to the service bound, so the model can
 // shorten a command but never outlast the configured limit.
 func TestBashTimeoutIsClamped(t *testing.T) {
@@ -388,12 +442,12 @@ func TestBashTimeoutIsClamped(t *testing.T) {
 		{deltas: []string{"done"}},
 	}, nil)
 
-	if err := h.svc.Prompt("s1", "host", "run it"); err != nil {
+	if err := h.prompt("s1", "host", "run it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	calls := h.exec.recorded()
+	calls := h.tools.recorded()
 	if len(calls) != 1 || calls[0].timeout != 2*time.Second {
 		t.Fatalf("exec timeout = %v, want the 2s service bound", calls)
 	}
@@ -406,9 +460,9 @@ func TestFailedToolIsReportedAndFedBack(t *testing.T) {
 		{calls: tool(toolBash, `{"command":"cat /root/x"}`)},
 		{deltas: []string{"permission denied"}},
 	}, nil)
-	h.exec.err = &Error{Code: apperror.Unknown, Message: "exit status 1"}
+	h.tools.err = &Error{Code: apperror.Unknown, Message: "exit status 1"}
 
-	if err := h.svc.Prompt("s1", "host", "read it"); err != nil {
+	if err := h.prompt("s1", "host", "read it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -442,14 +496,15 @@ func TestDeniedSensitiveToolDoesNotExec(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolBash, `{"command":"rm -rf /"}`)},
 		{deltas: []string{"blocked"}},
-	}, func(d *Deps) { d.Auth = auth })
+	}, nil)
+	h.tools.auth = auth
 
-	if err := h.svc.Prompt("s1", "prod-web", "wipe it"); err != nil {
+	if err := h.prompt("s1", "prod-web", "wipe it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	if calls := h.exec.recorded(); len(calls) != 0 {
+	if calls := h.tools.recorded(); len(calls) != 0 {
 		t.Fatalf("exec ran despite deny: %+v", calls)
 	}
 	tools := h.sink.tools()
@@ -467,16 +522,17 @@ func TestReadToolSkipsPermissionGate(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolSftpRead, `{"path":"/etc/hosts"}`)},
 		{deltas: []string{"ok"}},
-	}, func(d *Deps) { d.Auth = auth })
-	h.files.content = "127.0.0.1 localhost"
+	}, nil)
+	h.tools.auth = auth
+	h.tools.content = "127.0.0.1 localhost"
 
-	if err := h.svc.Prompt("s1", "prod-web", "read hosts"); err != nil {
+	if err := h.prompt("s1", "prod-web", "read hosts"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	if h.files.readMax != MaxFileBytes {
-		t.Fatalf("read was not issued (max=%d)", h.files.readMax)
+	if len(h.tools.recorded()) != 1 {
+		t.Fatalf("read was not issued: %+v", h.tools.recorded())
 	}
 	tools := h.sink.tools()
 	if len(tools) != 1 || !tools[0].OK {
@@ -497,15 +553,16 @@ func TestDeniedWriteDoesNotWrite(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolSftpWrite, `{"path":"/tmp/x","content":"SECRET"}`)},
 		{deltas: []string{"no"}},
-	}, func(d *Deps) { d.Auth = auth })
+	}, nil)
+	h.tools.auth = auth
 
-	if err := h.svc.Prompt("s1", "prod-web", "write it"); err != nil {
+	if err := h.prompt("s1", "prod-web", "write it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	if h.files.writePath != "" || h.files.written != "" {
-		t.Fatalf("write ran despite deny: path=%q written=%q", h.files.writePath, h.files.written)
+	if h.tools.writePath != "" || h.tools.written != "" {
+		t.Fatalf("write ran despite deny: path=%q written=%q", h.tools.writePath, h.tools.written)
 	}
 	if len(seen) != 1 || seen[0].Summary != "/tmp/x" || seen[0].Detail != "6 bytes" {
 		t.Fatalf("permission request = %+v", seen)
@@ -523,27 +580,27 @@ func (g *recordingGate) Ask(_ context.Context, req permission.Request) (permissi
 	return g.fn(req), nil
 }
 
-// The file tools ride the SFTP service with the agent's own byte cap, so a
-// large remote file cannot be pulled into the request.
-func TestFileToolsUseAgentByteCap(t *testing.T) {
+// The file tools advertise the MCP 512KiB cap; read/write still round-trip
+// through the tool caller so a large remote file is the runtime's problem.
+func TestFileToolsUseMCPByteCap(t *testing.T) {
+	if MaxFileBytes != mcpcli.MaxFileBytes {
+		t.Fatalf("agent file cap = %d, want MCP MaxFileBytes (%d)", MaxFileBytes, mcpcli.MaxFileBytes)
+	}
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolSftpRead, `{"path":"/etc/hosts"}`)},
 		{calls: tool(toolSftpWrite, `{"path":"/tmp/out","content":"hello"}`)},
 		{deltas: []string{"written"}},
 	}, nil)
-	h.files.content = "127.0.0.1 localhost"
+	h.tools.content = "127.0.0.1 localhost"
 
-	if err := h.svc.Prompt("s1", "host", "sync hosts"); err != nil {
+	if err := h.prompt("s1", "host", "sync hosts"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	h.files.mu.Lock()
-	readMax, written, writePath := h.files.readMax, h.files.written, h.files.writePath
-	h.files.mu.Unlock()
-	if readMax != MaxFileBytes {
-		t.Fatalf("read cap = %d, want MaxFileBytes (%d)", readMax, MaxFileBytes)
-	}
+	h.tools.mu.Lock()
+	written, writePath := h.tools.written, h.tools.writePath
+	h.tools.mu.Unlock()
 	if written != "hello" || writePath != "/tmp/out" {
 		t.Fatalf("write = (%q, %q)", writePath, written)
 	}
@@ -559,13 +616,13 @@ func TestAbortStopsRunAndReportsAborted(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolBash, `{"command":"tail -f /var/log/syslog"}`)},
 	}, nil)
-	h.exec.block = true
+	h.tools.block = true
 
-	if err := h.svc.Prompt("s1", "host", "tail the log"); err != nil {
+	if err := h.prompt("s1", "host", "tail the log"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the tool to start")
 		}
@@ -596,13 +653,13 @@ func TestAbortMidToolLeavesUsableTranscript(t *testing.T) {
 		}},
 		{deltas: []string{"back again"}},
 	}, nil)
-	h.exec.block = true
+	h.tools.block = true
 
-	if err := h.svc.Prompt("s1", "host", "tail it"); err != nil {
+	if err := h.prompt("s1", "host", "tail it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the tool to start")
 		}
@@ -611,10 +668,10 @@ func TestAbortMidToolLeavesUsableTranscript(t *testing.T) {
 	h.svc.Abort("s1")
 	h.waitDone(t, 1)
 
-	h.exec.mu.Lock()
-	h.exec.block = false
-	h.exec.mu.Unlock()
-	if err := h.svc.Prompt("s1", "host", "never mind, what is up?"); err != nil {
+	h.tools.mu.Lock()
+	h.tools.block = false
+	h.tools.mu.Unlock()
+	if err := h.prompt("s1", "host", "never mind, what is up?"); err != nil {
 		t.Fatalf("Prompt after abort: %v", err)
 	}
 	h.waitDone(t, 2)
@@ -647,19 +704,19 @@ func TestConcurrentPromptRejected(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolBash, `{"command":"sleep"}`)},
 	}, nil)
-	h.exec.block = true
+	h.tools.block = true
 
-	if err := h.svc.Prompt("s1", "host", "first"); err != nil {
+	if err := h.prompt("s1", "host", "first"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the first run")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err := h.svc.Prompt("s1", "host", "second"); err == nil {
+	if err := h.prompt("s1", "host", "second"); err == nil {
 		t.Fatal("a second prompt during a run must be rejected")
 	}
 	h.svc.Abort("s1")
@@ -673,13 +730,13 @@ func TestDisposeCancelsRunAndDropsHistory(t *testing.T) {
 		{calls: tool(toolBash, `{"command":"sleep"}`)},
 		{deltas: []string{"fresh"}},
 	}, nil)
-	h.exec.block = true
+	h.tools.block = true
 
-	if err := h.svc.Prompt("s1", "host", "remember this"); err != nil {
+	if err := h.prompt("s1", "host", "remember this"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the run to start")
 		}
@@ -690,10 +747,10 @@ func TestDisposeCancelsRunAndDropsHistory(t *testing.T) {
 		t.Fatalf("disposed run must not emit done (got %d)", got)
 	}
 
-	h.exec.mu.Lock()
-	h.exec.block = false
-	h.exec.mu.Unlock()
-	if err := h.svc.Prompt("s1", "host", "new question"); err != nil {
+	h.tools.mu.Lock()
+	h.tools.block = false
+	h.tools.mu.Unlock()
+	if err := h.prompt("s1", "host", "new question"); err != nil {
 		t.Fatalf("Prompt after dispose: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -714,13 +771,13 @@ func TestClearDuringRunDropsHistory(t *testing.T) {
 		{calls: tool(toolBash, `{"command":"sleep"}`)},
 		{deltas: []string{"fresh"}},
 	}, nil)
-	h.exec.block = true
+	h.tools.block = true
 
-	if err := h.svc.Prompt("s1", "host", "remember this"); err != nil {
+	if err := h.prompt("s1", "host", "remember this"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the run to start")
 		}
@@ -728,10 +785,10 @@ func TestClearDuringRunDropsHistory(t *testing.T) {
 	}
 	h.svc.Clear("s1")
 
-	h.exec.mu.Lock()
-	h.exec.block = false
-	h.exec.mu.Unlock()
-	if err := h.svc.Prompt("s1", "host", "new question"); err != nil {
+	h.tools.mu.Lock()
+	h.tools.block = false
+	h.tools.mu.Unlock()
+	if err := h.prompt("s1", "host", "new question"); err != nil {
 		t.Fatalf("Prompt after clear must not wait on the detached run: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -755,7 +812,7 @@ func TestDisposeAllJoinsInFlightRun(t *testing.T) {
 	h := newHarness(t, []sseTurn{
 		{calls: tool(toolBash, `{"command":"sleep"}`)},
 	}, nil)
-	h.exec.park = park
+	h.tools.park = park
 	t.Cleanup(func() {
 		select {
 		case <-park:
@@ -764,11 +821,11 @@ func TestDisposeAllJoinsInFlightRun(t *testing.T) {
 		}
 	})
 
-	if err := h.svc.Prompt("s1", "host", "hold"); err != nil {
+	if err := h.prompt("s1", "host", "hold"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(h.exec.recorded()) == 0 {
+	for len(h.tools.recorded()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the run to start")
 		}
@@ -802,12 +859,12 @@ func TestTurnLimitEndsWithError(t *testing.T) {
 	}
 	h := newHarness(t, turns, func(d *Deps) { d.MaxTurns = 3 })
 
-	if err := h.svc.Prompt("s1", "host", "loop"); err != nil {
+	if err := h.prompt("s1", "host", "loop"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
 
-	if got := len(h.exec.recorded()); got != 3 {
+	if got := len(h.tools.recorded()); got != 3 {
 		t.Fatalf("exec calls = %d, want the 3-turn cap", got)
 	}
 	errs := h.sink.errors()
@@ -821,7 +878,7 @@ func TestTurnLimitEndsWithError(t *testing.T) {
 func TestAPIKeyOnlyTravelsInAuthorizationHeader(t *testing.T) {
 	h := newHarness(t, []sseTurn{{deltas: []string{"hi"}}}, nil)
 
-	if err := h.svc.Prompt("s1", "host", "hello"); err != nil {
+	if err := h.prompt("s1", "host", "hello"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -850,16 +907,12 @@ func TestProviderErrorRedactsKeyAndCodesTheFailure(t *testing.T) {
 
 	sink := &recSink{}
 	svc := New(Deps{
-		Execer: &fakeExecer{},
-		Files:  &fakeFiles{},
-		Sink:   sink,
-		Config: func() (Config, error) {
-			return Config{BaseURL: srv.URL, Model: "m", APIKey: "sk-test-key"}, nil
-		},
+		Tools: &fakeTools{},
+		Sink:  sink,
 	})
 	defer svc.DisposeAll()
 
-	if err := svc.Prompt("s1", "host", "hello"); err != nil {
+	if err := svc.Prompt("s1", "host", "hello", Config{BaseURL: srv.URL, Model: "m", APIKey: "sk-test-key"}); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -886,24 +939,23 @@ func TestProviderErrorRedactsKeyAndCodesTheFailure(t *testing.T) {
 // point at settings instead of showing a failed run.
 func TestPromptRejectedWhenUnconfigured(t *testing.T) {
 	sink := &recSink{}
-	svc := New(Deps{Sink: sink, Config: func() (Config, error) {
-		return Config{BaseURL: "https://x.test/v1", Model: "m"}, nil
-	}})
+	svc := New(Deps{Sink: sink})
 	defer svc.DisposeAll()
 
-	if err := svc.Prompt("s1", "host", "hello"); err == nil {
+	if err := svc.Prompt("s1", "host", "hello", Config{BaseURL: "https://x.test/v1", Model: "m"}); err == nil {
 		t.Fatal("a missing API key must reject the prompt")
 	}
 	if got := len(sink.snapshot()); got != 0 {
 		t.Fatalf("a rejected prompt must emit nothing, got %d events", got)
 	}
-	if err := svc.Prompt("", "host", "hello"); err == nil {
+	cfg := Config{BaseURL: "https://x.test/v1", Model: "m", APIKey: "k"}
+	if err := svc.Prompt("", "host", "hello", cfg); err == nil {
 		t.Fatal("a prompt without a session must be rejected")
 	}
-	if err := svc.Prompt("s1", "host", "   "); err == nil {
+	if err := svc.Prompt("s1", "host", "   ", cfg); err == nil {
 		t.Fatal("a blank prompt must be rejected")
 	}
-	if err := svc.Prompt("s1", "host", strings.Repeat("x", MaxPromptBytes+1)); err == nil {
+	if err := svc.Prompt("s1", "host", strings.Repeat("x", MaxPromptBytes+1), cfg); err == nil {
 		t.Fatal("an oversized prompt must be rejected")
 	}
 }
@@ -913,7 +965,7 @@ func TestPromptRejectedWhenUnconfigured(t *testing.T) {
 func TestPromptRejectedAfterDisposeAll(t *testing.T) {
 	h := newHarness(t, []sseTurn{{deltas: []string{"hi"}}}, nil)
 	h.svc.DisposeAll()
-	if err := h.svc.Prompt("s1", "host", "hello"); err == nil {
+	if err := h.prompt("s1", "host", "hello"); err == nil {
 		t.Fatal("Prompt after DisposeAll must be rejected")
 	}
 }
@@ -925,9 +977,9 @@ func TestOversizedToolResultTruncated(t *testing.T) {
 		{calls: tool(toolBash, `{"command":"cat big"}`)},
 		{deltas: []string{"ok"}},
 	}, nil)
-	h.exec.out = strings.Repeat("y", MaxToolResultBytes*2)
+	h.tools.out = strings.Repeat("y", MaxToolResultBytes*2)
 
-	if err := h.svc.Prompt("s1", "host", "dump it"); err != nil {
+	if err := h.prompt("s1", "host", "dump it"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)
@@ -971,7 +1023,7 @@ func TestTrimHistoryNeverLeavesOrphanToolResult(t *testing.T) {
 // boundary; the advertised tools are exactly the remote four.
 func TestSystemPromptAndToolSurface(t *testing.T) {
 	h := newHarness(t, []sseTurn{{deltas: []string{"hi"}}}, nil)
-	if err := h.svc.Prompt("s1", "prod-web", "hello"); err != nil {
+	if err := h.prompt("s1", "prod-web", "hello"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	h.waitDone(t, 1)

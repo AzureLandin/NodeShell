@@ -43,10 +43,10 @@ func Fingerprint(key ssh.PublicKey) string {
 // invented values that never equal a real errno on Windows, so the raw
 // values are compared directly; on other platforms these numbers are unused.
 const (
-	wsaConnRefused  = 10061 // WSAECONNREFUSED
-	wsaHostUnreach  = 10065 // WSAEHOSTUNREACH
-	wsaNetUnreach   = 10051 // WSAENETUNREACH
-	wsaConnReset    = 10054 // WSAECONNRESET
+	wsaConnRefused = 10061 // WSAECONNREFUSED
+	wsaHostUnreach = 10065 // WSAEHOSTUNREACH
+	wsaNetUnreach  = 10051 // WSAENETUNREACH
+	wsaConnReset   = 10054 // WSAECONNRESET
 )
 
 // errnoIs reports whether err unwraps to one of the given syscall errnos.
@@ -88,6 +88,18 @@ func mapDialError(ctx context.Context, err error) error {
 		return &Error{Code: apperror.Timeout, Message: "Connection timed out"}
 	}
 	return &Error{Code: apperror.Unknown, Message: "Connection failed"}
+}
+
+// mapForwardError classifies a failed direct-tcpip open. Servers that disable
+// AllowTcpForwarding typically reject with "administratively prohibited".
+func mapForwardError(err error) error {
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "administratively prohibited") ||
+		strings.Contains(msg, "tcpip-forward") ||
+		strings.Contains(msg, "port forwarding") {
+		return &Error{Code: apperror.PermissionDenied, Message: "The server does not allow TCP forwarding"}
+	}
+	return &Error{Code: apperror.Unknown, Message: "Failed to open the remote connection"}
 }
 
 // mapCheckError classifies a host-key store error from the HostKeys.Check

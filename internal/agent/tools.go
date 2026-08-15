@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"nodeshell/internal/apperror"
-	"nodeshell/internal/permission"
+	"nodeshell/internal/mcpcli"
 	"nodeshell/internal/sftpservice"
 )
 
@@ -27,7 +27,7 @@ const maxListEntries = 200
 
 // toolSpecs advertises the tool surface. Schemas stay minimal on purpose:
 // every value is validated again on execution, and the remote limits (exec
-// output cap, file size cap) are enforced by the underlying services.
+// output cap, file size cap) are enforced by the underlying MCP runtime.
 func toolSpecs() []toolSpec {
 	return []toolSpec{
 		{
@@ -108,121 +108,28 @@ func toolSpecs() []toolSpec {
 // command in a terminal.
 func (s *Service) runTool(ctx context.Context, sessionID, title string, call toolCall) (string, string, bool) {
 	name := call.Function.Name
-	switch name {
-	case toolBash:
-		var args struct {
-			Command   string `json:"command"`
-			TimeoutMs int64  `json:"timeoutMs"`
-		}
-		if err := decodeArgs(call.Function.Arguments, &args); err != nil {
-			return toolError(err), name, false
-		}
-		command := strings.TrimSpace(args.Command)
+	args, err := decodeArgsMap(call.Function.Arguments)
+	if err != nil {
+		return toolError(err), name, false
+	}
+	if name == toolBash {
+		command, _ := args["command"].(string)
+		command = strings.TrimSpace(command)
 		if command == "" {
 			return toolError(errf(apperror.Unknown, "command is required")), name, false
 		}
-		summary := truncateSummary(command)
-		if err := s.authorize(ctx, sessionID, title, name, summary, ""); err != nil {
-			return toolError(err), summary, false
-		}
-		if s.exec == nil {
-			return toolError(errf(apperror.Unknown, "Remote commands are unavailable")), summary, false
-		}
-		out, err := s.exec.Exec(sessionID, ctx, command, s.commandTimeout(args.TimeoutMs))
-		if err != nil {
-			return toolError(err), summary, false
-		}
-		return capResult(out), summary, true
-
-	case toolSftpList:
-		var args struct {
-			Path string `json:"path"`
-		}
-		if err := decodeArgs(call.Function.Arguments, &args); err != nil {
-			return toolError(err), name, false
-		}
-		summary := args.Path
-		if strings.TrimSpace(summary) == "" {
-			summary = "."
-		}
-		if err := s.authorize(ctx, sessionID, title, name, summary, ""); err != nil {
-			return toolError(err), summary, false
-		}
-		if s.files == nil {
-			return toolError(errf(apperror.Unknown, "Remote files are unavailable")), summary, false
-		}
-		entries, err := s.files.List(sessionID, args.Path)
-		if err != nil {
-			return toolError(err), summary, false
-		}
-		return capResult(formatEntries(entries)), summary, true
-
-	case toolSftpRead:
-		var args struct {
-			Path string `json:"path"`
-		}
-		if err := decodeArgs(call.Function.Arguments, &args); err != nil {
-			return toolError(err), name, false
-		}
-		if strings.TrimSpace(args.Path) == "" {
-			return toolError(errf(apperror.Unknown, "path is required")), name, false
-		}
-		if err := s.authorize(ctx, sessionID, title, name, args.Path, ""); err != nil {
-			return toolError(err), args.Path, false
-		}
-		if s.files == nil {
-			return toolError(errf(apperror.Unknown, "Remote files are unavailable")), args.Path, false
-		}
-		resolved, content, err := s.files.ReadText(sessionID, args.Path, MaxFileBytes)
-		if err != nil {
-			return toolError(err), args.Path, false
-		}
-		return capResult(content), resolved, true
-
-	case toolSftpWrite:
-		var args struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-		}
-		if err := decodeArgs(call.Function.Arguments, &args); err != nil {
-			return toolError(err), name, false
-		}
-		if strings.TrimSpace(args.Path) == "" {
-			return toolError(errf(apperror.Unknown, "path is required")), name, false
-		}
-		detail := fmt.Sprintf("%d bytes", len(args.Content))
-		if err := s.authorize(ctx, sessionID, title, name, args.Path, detail); err != nil {
-			return toolError(err), args.Path, false
-		}
-		if s.files == nil {
-			return toolError(errf(apperror.Unknown, "Remote files are unavailable")), args.Path, false
-		}
-		resolved, err := s.files.WriteText(sessionID, args.Path, args.Content, MaxFileBytes)
-		if err != nil {
-			return toolError(err), args.Path, false
-		}
-		return fmt.Sprintf("wrote %d bytes to %s", len(args.Content), resolved), resolved, true
-
-	default:
-		return toolError(errf(apperror.Unknown, "unknown tool")), name, false
+		args["command"] = command
+		args["timeoutMs"] = int64(s.commandTimeout(intFromArgs(args, "timeoutMs")) / time.Millisecond)
 	}
-}
-
-// authorize asks the permission service before a tool runs. Nil Auth allows
-// (tests). The request never carries file contents or secrets — only a
-// command, a path, or a write size.
-func (s *Service) authorize(ctx context.Context, sessionID, title, tool, summary, detail string) error {
-	if s.auth == nil {
-		return nil
+	summary := toolSummary(name, args)
+	if s.tools == nil {
+		return toolError(errf(apperror.Unknown, "Remote tools are unavailable")), summary, false
 	}
-	return s.auth.Authorize(ctx, permission.Request{
-		Source:    permission.SourceAgent,
-		Tool:      tool,
-		SessionID: sessionID,
-		Title:     title,
-		Summary:   permission.Truncate(summary),
-		Detail:    detail,
-	})
+	result, err := s.tools.Call(ctx, sessionID, title, name, args)
+	if err != nil {
+		return toolError(err), summary, false
+	}
+	return formatToolResult(name, args, result), summary, true
 }
 
 // commandTimeout clamps a model-supplied timeout into (0, execTimeout]; an
@@ -242,17 +149,88 @@ func (s *Service) commandTimeout(ms int64) time.Duration {
 	return d
 }
 
-// decodeArgs parses the streamed argument JSON. Empty arguments are treated as
-// an empty object, which some providers send for a no-parameter call.
-func decodeArgs(raw string, out any) error {
+// decodeArgsMap parses the streamed argument JSON. Empty arguments are treated
+// as an empty object, which some providers send for a no-parameter call.
+func decodeArgsMap(raw string) (map[string]any, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		trimmed = "{}"
 	}
-	if err := json.Unmarshal([]byte(trimmed), out); err != nil {
-		return errf(apperror.Unknown, "arguments are not valid JSON")
+	var args map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
+		return nil, errf(apperror.Unknown, "arguments are not valid JSON")
 	}
-	return nil
+	if args == nil {
+		args = map[string]any{}
+	}
+	return args, nil
+}
+
+func intFromArgs(args map[string]any, key string) int64 {
+	v, ok := args[key]
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case int32:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+func stringFromArgs(args map[string]any, key string) string {
+	s, _ := args[key].(string)
+	return s
+}
+
+func toolSummary(name string, args map[string]any) string {
+	switch name {
+	case toolBash:
+		return truncateSummary(stringFromArgs(args, "command"))
+	case toolSftpList:
+		path := strings.TrimSpace(stringFromArgs(args, "path"))
+		if path == "" {
+			return "."
+		}
+		return path
+	case toolSftpRead, toolSftpWrite:
+		return stringFromArgs(args, "path")
+	default:
+		return name
+	}
+}
+
+func formatToolResult(name string, args map[string]any, result any) string {
+	switch name {
+	case toolBash:
+		out, _ := result.(string)
+		return capResult(out)
+	case toolSftpList:
+		if res, ok := result.(mcpcli.SftpListResult); ok {
+			return capResult(formatEntries(res.Entries))
+		}
+	case toolSftpRead:
+		if res, ok := result.(mcpcli.SftpReadResult); ok {
+			return capResult(res.Content)
+		}
+	case toolSftpWrite:
+		path := stringFromArgs(args, "path")
+		if res, ok := result.(mcpcli.SftpWriteResult); ok && res.Path != "" {
+			path = res.Path
+		}
+		return fmt.Sprintf("wrote %d bytes to %s", len(stringFromArgs(args, "content")), path)
+	}
+	return capResult(fmt.Sprint(result))
 }
 
 // toolError renders a failure for the model. The message is the coded,

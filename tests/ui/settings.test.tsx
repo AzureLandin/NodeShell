@@ -4,8 +4,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { SettingsModal } from '../../src/renderer/src/components/SettingsModal'
-import { installFakeApi } from './helpers'
-import { renderWithI18n } from './helpers'
+import { installFakeApi, renderWithI18n } from './helpers'
 import type { LanguageCode, ThemePreference } from '../../src/shared/types'
 
 /**
@@ -34,6 +33,34 @@ function makeProps(): ComponentProps<typeof SettingsModal> {
   }
 }
 
+async function openCategory(
+  user: ReturnType<typeof userEvent.setup>,
+  name: 'General' | 'Agent' | 'MCP'
+): Promise<void> {
+  await user.click(screen.getByRole('button', { name }))
+}
+
+async function expandProvider(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+): Promise<void> {
+  await user.click(screen.getByRole('button', { name }))
+}
+
+describe('SettingsModal navigation', () => {
+  it('index lists only the three category rows', () => {
+    const fake = installFakeApi()
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+
+    expect(screen.getAllByRole('button', { name: /^(General|Agent|MCP)$/ })).toHaveLength(3)
+    expect(screen.queryByLabelText('Font')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Register' })).not.toBeInTheDocument()
+    expect(fake.mocks.fonts.list).not.toHaveBeenCalled()
+    expect(fake.mocks.mcpRegistration.status).not.toHaveBeenCalled()
+    expect(fake.mocks.agent.status).not.toHaveBeenCalled()
+  })
+})
+
 describe('SettingsModal language/theme/font', () => {
   it('loads the font list from the API and fires the font change callback on selection', async () => {
     const fake = installFakeApi()
@@ -41,6 +68,7 @@ describe('SettingsModal language/theme/font', () => {
     const props = makeProps()
     renderWithI18n(<SettingsModal {...props} />)
     const user = userEvent.setup()
+    await openCategory(user, 'General')
 
     await user.click(screen.getByLabelText('Font'))
     const option = await screen.findByRole('option', { name: 'Consolas' })
@@ -55,6 +83,7 @@ describe('SettingsModal language/theme/font', () => {
     const props = makeProps()
     renderWithI18n(<SettingsModal {...props} />)
     const user = userEvent.setup()
+    await openCategory(user, 'General')
 
     await user.click(screen.getByLabelText('Language'))
     await user.click(await screen.findByRole('option', { name: 'English' }))
@@ -67,6 +96,7 @@ describe('SettingsModal language/theme/font', () => {
     const props = makeProps()
     renderWithI18n(<SettingsModal {...props} />)
     const user = userEvent.setup()
+    await openCategory(user, 'General')
 
     await user.click(screen.getByLabelText('Theme'))
     await user.click(await screen.findByRole('option', { name: 'Dark' }))
@@ -92,6 +122,7 @@ describe('SettingsModal MCP registration', () => {
     ])
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'MCP')
 
     expect(await screen.findByText('Cursor')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Register' }))
@@ -105,6 +136,7 @@ describe('SettingsModal MCP registration', () => {
     fake.mocks.mcpRegistration.register.mockResolvedValue([])
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'MCP')
 
     await user.click(screen.getByRole('button', { name: 'Register all' }))
 
@@ -114,6 +146,7 @@ describe('SettingsModal MCP registration', () => {
   it('describes native executable --mcp registration with no Node.js requirement', async () => {
     installFakeApi()
     renderWithI18n(<SettingsModal {...makeProps()} />)
+    await openCategory(userEvent.setup(), 'MCP')
 
     // S3.5: registration writes the native executable path + --mcp; the
     // shipped product must not require a Node.js runtime. The rendered hint
@@ -140,6 +173,7 @@ describe('SettingsModal MCP registration', () => {
       }
     ])
     renderWithI18n(<SettingsModal {...makeProps()} />)
+    await openCategory(userEvent.setup(), 'MCP')
     expect(await screen.findByText('/x/cursor.json')).toBeInTheDocument()
   })
 
@@ -157,6 +191,7 @@ describe('SettingsModal MCP registration', () => {
     })
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'MCP')
 
     const launch = await screen.findByLabelText('Launch command')
     expect(launch).toHaveValue('/opt/NodeShell --mcp')
@@ -193,6 +228,7 @@ describe('SettingsModal MCP registration', () => {
       }
     })
     renderWithI18n(<SettingsModal {...makeProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'MCP' }))
 
     await screen.findByLabelText('Config preview')
     fireEvent.click(screen.getByRole('tab', { name: 'VS Code' }))
@@ -204,46 +240,75 @@ describe('SettingsModal MCP registration', () => {
   })
 })
 
-describe('SettingsModal agent endpoint', () => {
-  it('loads the endpoint and saves it with the key, then empties the key field', async () => {
+describe('SettingsModal agent providers', () => {
+  it('loads a provider and saves it with the key, then empties the key field', async () => {
     const fake = installFakeApi()
     fake.mocks.agent.status.mockResolvedValue({
       configured: false,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini'
+      providers: [
+        {
+          id: 'p1',
+          name: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          models: ['gpt-4o-mini'],
+          hasKey: false
+        }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'gpt-4o-mini'
     })
-    fake.mocks.agent.setConfig.mockResolvedValue({
+    const saved = {
       configured: true,
-      baseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat'
-    })
+      providers: [
+        {
+          id: 'p1',
+          name: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          models: ['deepseek-chat'],
+          hasKey: true
+        }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'deepseek-chat'
+    }
+    fake.mocks.agent.upsertProvider.mockResolvedValue({ ...saved, configured: false, providers: [{ ...saved.providers[0], hasKey: false }] })
+    fake.mocks.agent.setProviderKey.mockResolvedValue(saved)
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+    await expandProvider(user, 'OpenAI')
 
-    const baseUrl = await screen.findByLabelText('Base URL')
+    const baseUrl = await screen.findByLabelText('Base URL 1')
     expect(baseUrl).toHaveValue('https://api.openai.com/v1')
-    const key = screen.getByLabelText('API key')
-    // The stored key is never sent back to the renderer, so the field starts
-    // empty and only reports whether one exists.
+    const key = screen.getByLabelText('API key 1')
     expect(key).toHaveValue('')
     expect(key).toHaveAttribute('placeholder', 'Not set')
 
+    await user.clear(screen.getByLabelText('Name 1'))
+    await user.type(screen.getByLabelText('Name 1'), 'DeepSeek')
     await user.clear(baseUrl)
     await user.type(baseUrl, 'https://api.deepseek.com/v1')
-    await user.clear(screen.getByLabelText('Model'))
-    await user.type(screen.getByLabelText('Model'), 'deepseek-chat')
+    await user.clear(screen.getByLabelText('Models 1'))
+    await user.type(screen.getByLabelText('Models 1'), 'deepseek-chat')
     await user.type(key, 'sk-secret')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
-      expect(fake.mocks.agent.setConfig).toHaveBeenCalledWith({
+      expect(fake.mocks.agent.upsertProvider).toHaveBeenCalledWith({
+        id: 'p1',
+        name: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com/v1',
-        model: 'deepseek-chat',
-        apiKey: 'sk-secret'
+        models: ['deepseek-chat']
       })
     )
-    await waitFor(() => expect(screen.getByLabelText('API key')).toHaveValue(''))
-    expect(screen.getByLabelText('API key')).toHaveAttribute(
+    await waitFor(() => expect(fake.mocks.agent.setProviderKey).toHaveBeenCalledWith('p1', 'sk-secret'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'DeepSeek' })).toHaveAttribute('aria-expanded', 'false')
+    )
+
+    await expandProvider(user, 'DeepSeek')
+    await waitFor(() => expect(screen.getByLabelText('API key 1')).toHaveValue(''))
+    expect(screen.getByLabelText('API key 1')).toHaveAttribute(
       'placeholder',
       'Stored — type to replace'
     )
@@ -251,61 +316,83 @@ describe('SettingsModal agent endpoint', () => {
 
   it('omits the key when the field was left untouched', async () => {
     const fake = installFakeApi()
-    fake.mocks.agent.status.mockResolvedValue({
+    fake.mocks.agent.upsertProvider.mockResolvedValue({
       configured: true,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini'
-    })
-    fake.mocks.agent.setConfig.mockResolvedValue({
-      configured: true,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o'
+      providers: [
+        {
+          id: 'p1',
+          name: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          models: ['gpt-4o'],
+          hasKey: true
+        }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'gpt-4o'
     })
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+    await expandProvider(user, 'OpenAI')
 
-    const model = await screen.findByLabelText('Model')
-    await waitFor(() => expect(model).toBeEnabled())
-    await user.clear(model)
-    await user.type(model, 'gpt-4o')
+    const models = await screen.findByLabelText('Models 1')
+    await waitFor(() => expect(models).toBeEnabled())
+    await user.clear(models)
+    await user.type(models, 'gpt-4o')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
-      expect(fake.mocks.agent.setConfig).toHaveBeenCalledWith({
+      expect(fake.mocks.agent.upsertProvider).toHaveBeenCalledWith({
+        id: 'p1',
+        name: 'OpenAI',
         baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-4o'
+        models: ['gpt-4o']
       })
     )
+    expect(fake.mocks.agent.setProviderKey).not.toHaveBeenCalled()
   })
 
   it('clears the stored key through the API', async () => {
     const fake = installFakeApi()
-    fake.mocks.agent.status.mockResolvedValue({
-      configured: true,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini'
-    })
-    fake.mocks.agent.setConfig.mockResolvedValue({
+    fake.mocks.agent.setProviderKey.mockResolvedValue({
       configured: false,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini'
+      providers: [
+        {
+          id: 'p1',
+          name: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          models: ['gpt-4o-mini'],
+          hasKey: false
+        }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'gpt-4o-mini'
     })
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+    await expandProvider(user, 'OpenAI')
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear key' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Clear key' }))
 
-    await waitFor(() => expect(fake.mocks.agent.setConfig).toHaveBeenCalledWith({ apiKey: '' }))
+    await waitFor(() => expect(fake.mocks.agent.setProviderKey).toHaveBeenCalledWith('p1', ''))
     expect(await screen.findByText('API key cleared')).toBeInTheDocument()
   })
 
-  it('does not save until the stored endpoint has loaded', async () => {
+  it('does not save until the stored providers have loaded', async () => {
     const fake = installFakeApi()
     let release!: (value: {
       configured: boolean
-      baseUrl: string
-      model: string
+      providers: Array<{
+        id: string
+        name: string
+        baseUrl: string
+        models: string[]
+        hasKey: boolean
+      }>
+      defaultProviderId: string
+      defaultModel: string
     }) => void
     fake.mocks.agent.status.mockReturnValue(
       new Promise((resolve) => {
@@ -313,19 +400,78 @@ describe('SettingsModal agent endpoint', () => {
       })
     )
     renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
 
-    const save = await screen.findByRole('button', { name: 'Save' })
-    expect(save).toBeDisabled()
-    expect(fake.mocks.agent.setConfig).not.toHaveBeenCalled()
+    const add = await screen.findByRole('button', { name: 'Add provider' })
+    expect(add).toBeDisabled()
+    expect(fake.mocks.agent.upsertProvider).not.toHaveBeenCalled()
 
     release({
       configured: true,
-      baseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat'
+      providers: [
+        {
+          id: 'p1',
+          name: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          models: ['deepseek-chat'],
+          hasKey: true
+        }
+      ],
+      defaultProviderId: 'p1',
+      defaultModel: 'deepseek-chat'
     })
-    await waitFor(() => expect(save).toBeEnabled())
-    expect(screen.getByLabelText('Base URL')).toHaveValue('https://api.deepseek.com/v1')
-    expect(screen.getByLabelText('Model')).toHaveValue('deepseek-chat')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add provider' })).toBeEnabled())
+    await expandProvider(user, 'DeepSeek')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled())
+    expect(screen.getByLabelText('Base URL 1')).toHaveValue('https://api.deepseek.com/v1')
+    expect(screen.getByLabelText('Models 1')).toHaveValue('deepseek-chat')
+  })
+
+  it('adds a card expanded, collapses it after save, and expands again on click', async () => {
+    const fake = installFakeApi()
+    fake.mocks.agent.status.mockResolvedValue({
+      configured: false,
+      providers: [],
+      defaultProviderId: '',
+      defaultModel: ''
+    })
+    fake.mocks.agent.upsertProvider.mockResolvedValue({
+      configured: true,
+      providers: [
+        {
+          id: 'p2',
+          name: 'Groq',
+          baseUrl: 'https://api.groq.com/openai/v1',
+          models: ['llama'],
+          hasKey: false
+        }
+      ],
+      defaultProviderId: 'p2',
+      defaultModel: 'llama'
+    })
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add provider' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(screen.getByRole('button', { name: 'New provider' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByLabelText('Name 1')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Name 1'), 'Groq')
+    await user.type(screen.getByLabelText('Base URL 1'), 'https://api.groq.com/openai/v1')
+    await user.type(screen.getByLabelText('Models 1'), 'llama')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Groq' })).toHaveAttribute('aria-expanded', 'false')
+    )
+    const collapsed = screen.getByRole('button', { name: 'Groq' })
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false')
+
+    await expandProvider(user, 'Groq')
+    expect(screen.getByLabelText('Base URL 1')).toHaveValue('https://api.groq.com/openai/v1')
   })
 })
 
@@ -335,6 +481,7 @@ describe('SettingsModal permissions', () => {
     const props = makeProps()
     renderWithI18n(<SettingsModal {...props} />)
     const user = userEvent.setup()
+    await openCategory(user, 'General')
 
     await user.click(screen.getByLabelText('Sensitive operations'))
     await user.click(await screen.findByRole('option', { name: 'Deny' }))

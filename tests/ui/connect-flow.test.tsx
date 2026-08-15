@@ -33,6 +33,17 @@ vi.mock('@xterm/addon-fit', () => {
   }
   return { FitAddon: MockFitAddon }
 })
+vi.mock('@xterm/addon-webgl', () => {
+  class MockWebglAddon {
+    onContextLoss = vi.fn(() => ({ dispose: vi.fn() }))
+    dispose = vi.fn()
+  }
+  return { WebglAddon: MockWebglAddon }
+})
+vi.mock('@xterm/addon-unicode-graphemes', () => {
+  class MockUnicodeGraphemesAddon {}
+  return { UnicodeGraphemesAddon: MockUnicodeGraphemesAddon }
+})
 
 function defaultSettings(): AppSettings {
   return {

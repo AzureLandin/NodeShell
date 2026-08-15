@@ -286,6 +286,24 @@ func (s *Session) Stderr() io.Reader { return s.stderr }
 // verified during this connection, or "" when the handshake never completed.
 func (s *Session) Fingerprint() string { return s.fingerprint }
 
+// Dial opens a TCP connection through this session (SSH direct-tcpip), used
+// for local port forwards. The address is the remote endpoint, typically
+// 127.0.0.1:port.
+func (s *Session) Dial(network, addr string) (net.Conn, error) {
+	s.mu.Lock()
+	closed := s.closed
+	client := s.client
+	s.mu.Unlock()
+	if closed || client == nil {
+		return nil, &Error{Code: apperror.Unknown, Message: "Session is closed"}
+	}
+	conn, err := client.Dial(network, addr)
+	if err != nil {
+		return nil, mapForwardError(err)
+	}
+	return conn, nil
+}
+
 // authMethods builds the ssh.AuthMethod list for the requested auth method.
 // Password auth offers both password and keyboard-interactive (servers often
 // advertise only the latter); private-key auth parses the key content, never

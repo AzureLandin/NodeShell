@@ -150,11 +150,16 @@ func mustSchema(s string) map[string]any {
 	return m
 }
 
-// Call dispatches a tool invocation. args is the parsed JSON object (extra
+// Call dispatches a tool invocation with default CallOpts (SourceMCP).
+func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (any, error) {
+	return r.CallWith(ctx, name, args, CallOpts{})
+}
+
+// CallWith dispatches a tool invocation. args is the parsed JSON object (extra
 // fields are ignored, like the SDK's zod strip); validation errors are coded
 // errors and never panic. Business errors keep their stable codes for the
 // server to format, and no message embeds a password or a path.
-func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (any, error) {
+func (r *Runtime) CallWith(ctx context.Context, name string, args map[string]any, opts CallOpts) (any, error) {
 	switch name {
 	case "list_hosts":
 		return r.ListHosts()
@@ -194,7 +199,7 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
-		if err := r.authorize(ctx, name, sessionID, permission.Truncate(command), ""); err != nil {
+		if err := r.authorize(ctx, opts, name, sessionID, permission.Truncate(command), ""); err != nil {
 			return nil, err
 		}
 		return r.RunCommand(ctx, sessionID, command, timeoutMs)
@@ -207,7 +212,11 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
-		return r.SftpList(ctx, sessionID, remotePath)
+		chdir, err := argChdir(args)
+		if err != nil {
+			return nil, toolArgError(name, err)
+		}
+		return r.sftpList(ctx, sessionID, remotePath, chdir)
 	case "sftp_read":
 		sessionID, err := argString(args, "sessionId")
 		if err != nil {
@@ -232,7 +241,7 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 			return nil, toolArgError(name, err)
 		}
 		detail := fmt.Sprintf("%d bytes", len(content))
-		if err := r.authorize(ctx, name, sessionID, remotePath, detail); err != nil {
+		if err := r.authorize(ctx, opts, name, sessionID, remotePath, detail); err != nil {
 			return nil, err
 		}
 		return r.SftpWrite(ctx, sessionID, remotePath, content)
@@ -249,7 +258,7 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
-		if err := r.authorize(ctx, name, sessionID, localPath, remoteName); err != nil {
+		if err := r.authorize(ctx, opts, name, sessionID, localPath, remoteName); err != nil {
 			return nil, err
 		}
 		return r.SftpUpload(ctx, sessionID, localPath, remoteName)
@@ -266,7 +275,7 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
-		if err := r.authorize(ctx, name, sessionID, remotePath, localPath); err != nil {
+		if err := r.authorize(ctx, opts, name, sessionID, remotePath, localPath); err != nil {
 			return nil, err
 		}
 		return r.SftpDownload(ctx, sessionID, remotePath, localPath)
@@ -313,6 +322,21 @@ func argBoolOpt(args map[string]any, key string) (bool, error) {
 	b, ok := v.(bool)
 	if !ok {
 		return false, fmt.Errorf("argument %q must be a boolean", key)
+	}
+	return b, nil
+}
+
+// argChdir reads the unadvertised sftp_list chdir flag. Absent defaults to
+// true (MCP's documented chdir-then-list). The in-app Agent passes false so
+// listing a path does not move the GUI SFTP panel.
+func argChdir(args map[string]any) (bool, error) {
+	v, ok := args["chdir"]
+	if !ok {
+		return true, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("argument %q must be a boolean", "chdir")
 	}
 	return b, nil
 }

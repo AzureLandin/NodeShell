@@ -438,6 +438,7 @@ func TestCallRejectsNullOptionalFields(t *testing.T) {
 		{"connect acceptHostKey null", "connect_host", map[string]any{"hostId": "h1", "acceptHostKey": nil}},
 		{"run timeoutMs null", "run_command", map[string]any{"sessionId": sid, "command": "ls", "timeoutMs": nil}},
 		{"sftp_list path null", "sftp_list", map[string]any{"sessionId": sid, "path": nil}},
+		{"sftp_list chdir null", "sftp_list", map[string]any{"sessionId": sid, "chdir": nil}},
 		{"sftp_upload remoteName null", "sftp_upload", map[string]any{"sessionId": sid, "localPath": "/home/me/a.txt", "remoteName": nil}},
 	}
 	for _, tc := range cases {
@@ -533,4 +534,76 @@ func TestCallSensitiveToolsHonourPermissionGate(t *testing.T) {
 	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{"sessionId": sid}); err != nil {
 		t.Fatalf("sftp_list under deny gate: %v", err)
 	}
+}
+
+// TestCallSftpListChdirFalse: chdir:false lists the path in place and does
+// not Chdir, so a GUI-shared cwd is left alone. Absent chdir still chdirs.
+func TestCallSftpListChdirFalse(t *testing.T) {
+	m := newFakeManager()
+	sf := &fakeSFTP{cwd: "/home/user", entries: []sftpservice.Entry{{Name: "a.txt"}}}
+	rt := newTestRuntime(2, time.Minute, m, sf, nil)
+	sid := connectOK(t, rt, "h1")
+
+	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{
+		"sessionId": sid, "path": "docs", "chdir": false,
+	}); err != nil {
+		t.Fatalf("Call(sftp_list chdir:false): %v", err)
+	}
+	if len(sf.chdirs) != 0 {
+		t.Fatalf("chdir:false must not Chdir, got %v", sf.chdirs)
+	}
+	if len(sf.lists) != 1 || sf.lists[0] != "docs" {
+		t.Fatalf("chdir:false must List the given path, got %v", sf.lists)
+	}
+
+	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{
+		"sessionId": sid, "path": "docs",
+	}); err != nil {
+		t.Fatalf("Call(sftp_list default chdir): %v", err)
+	}
+	if len(sf.chdirs) != 1 || sf.chdirs[0] != "docs" {
+		t.Fatalf("absent chdir must still Chdir, got %v", sf.chdirs)
+	}
+	if len(sf.lists) != 2 || sf.lists[1] != "" {
+		t.Fatalf("default chdir must List cwd after Chdir, got %v", sf.lists)
+	}
+}
+
+// TestCallWithOverridesPermissionSource: CallWith labels the ask with the
+// caller's source and title so the in-app Agent does not look like MCP.
+func TestCallWithOverridesPermissionSource(t *testing.T) {
+	m := newFakeManager()
+	m.execOut = "ok"
+	var seen []permission.Request
+	auth := permission.NewService(permission.ServiceDeps{
+		Gate: recordingPermGate{fn: func(req permission.Request) permission.Decision {
+			seen = append(seen, req)
+			return permission.DecisionAllowOnce
+		}},
+	})
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: &fakeSFTP{},
+		MaxSessions: 2, IdleTimeout: time.Minute, Auth: auth, GuestSessions: true,
+	})
+	m.live["gui-1"] = true
+
+	if _, err := rt.CallWith(context.Background(), "run_command", map[string]any{
+		"sessionId": "gui-1", "command": "id",
+	}, CallOpts{Source: permission.SourceAgent, Title: "prod-web"}); err != nil {
+		t.Fatalf("CallWith: %v", err)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("asks = %d, want 1", len(seen))
+	}
+	if seen[0].Source != permission.SourceAgent || seen[0].Title != "prod-web" || seen[0].SessionID != "gui-1" {
+		t.Fatalf("permission request = %+v", seen[0])
+	}
+}
+
+type recordingPermGate struct {
+	fn func(permission.Request) permission.Decision
+}
+
+func (g recordingPermGate) Ask(_ context.Context, req permission.Request) (permission.Decision, error) {
+	return g.fn(req), nil
 }

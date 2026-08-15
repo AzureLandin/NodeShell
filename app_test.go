@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -107,7 +108,7 @@ func TestSettingsGetDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SettingsGet: %v", err)
 	}
-	if got != settings.Defaults {
+	if !reflect.DeepEqual(got, settings.Defaults) {
 		t.Fatalf("SettingsGet = %+v, want defaults", got)
 	}
 }
@@ -164,7 +165,7 @@ func TestStartupInitialisesDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SettingsGet after startup: %v", err)
 	}
-	if s != settings.Defaults {
+	if !reflect.DeepEqual(s, settings.Defaults) {
 		t.Fatalf("settings after startup = %+v", s)
 	}
 }
@@ -226,7 +227,7 @@ func TestStartupRaceWithConcurrentCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SettingsGet after startup: %v", err)
 	}
-	if s != settings.Defaults {
+	if !reflect.DeepEqual(s, settings.Defaults) {
 		t.Fatalf("settings after startup = %+v", s)
 	}
 }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
+import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { ResolvedTheme } from '../../../shared/types'
@@ -12,6 +14,19 @@ import {
 
 /** Cap scrollback so the active terminal stays bounded in memory. */
 const TERMINAL_SCROLLBACK = 1000
+
+/** GPU renderer when WebGL2 is available; dispose on context loss to fall back to DOM. */
+function tryEnableWebglRenderer(term: Terminal): void {
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => {
+      webgl.dispose()
+    })
+    term.loadAddon(webgl)
+  } catch {
+    /* jsdom, old GPU, or missing WebGL2 — keep the DOM renderer */
+  }
+}
 
 interface TerminalViewProps {
   sessionId: string
@@ -58,11 +73,19 @@ export function TerminalView({
       fontSize,
       scrollback: TERMINAL_SCROLLBACK,
       theme: getTerminalTheme(resolvedThemeRef.current),
-      allowTransparency: false
+      allowTransparency: false,
+      // UnicodeGraphemesAddon uses xterm's proposed unicode service APIs.
+      allowProposedApi: true
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    try {
+      term.loadAddon(new UnicodeGraphemesAddon())
+    } catch {
+      /* addon is experimental; keep default character widths */
+    }
     term.open(containerRef.current)
+    tryEnableWebglRenderer(term)
     try {
       fit.fit()
     } catch {

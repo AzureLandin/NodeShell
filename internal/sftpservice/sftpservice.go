@@ -151,7 +151,9 @@ func (s *Service) session(id string) (*Session, error) {
 
 // ensure lazily opens the SFTP client once and pins the initial cwd to the
 // realpath of "." (mirrors the Electron ensure). Concurrent callers share
-// the first client; a failed open is retried on the next call.
+// the first client; a failed open is retried on the next call. After
+// Interrupt the client is gone but cwd stays: a reopen must not RealPath(".")
+// or the GUI panel would jump back to remote home.
 func (ss *Session) ensure() (sshclient.SFTPClient, string, error) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -161,6 +163,10 @@ func (ss *Session) ensure() (sshclient.SFTPClient, string, error) {
 	client, err := ss.opener.NewSFTPClient(ss.sessionID)
 	if err != nil {
 		return nil, "", err
+	}
+	if ss.cwd != "" {
+		ss.client = client
+		return client, ss.cwd, nil
 	}
 	cwd, err := client.RealPath(".")
 	if err != nil {
@@ -186,6 +192,27 @@ func (s *Service) Dispose(sessionID string) {
 	s.mu.Lock()
 	ss := s.sessions[sessionID]
 	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+	if ss == nil {
+		return
+	}
+	ss.mu.Lock()
+	c := ss.client
+	ss.client = nil
+	ss.mu.Unlock()
+	if c != nil {
+		_ = c.Close()
+	}
+}
+
+// Interrupt closes the cached SFTP client so an in-flight pkg/sftp call
+// unblocks, but keeps the session handle and its pinned cwd. The next
+// operation opens a fresh client at the same directory. Guest (in-app Agent)
+// cancel uses this: Dispose would drop the handle the GUI panel shares and
+// snap the panel back to remote home.
+func (s *Service) Interrupt(sessionID string) {
+	s.mu.Lock()
+	ss := s.sessions[sessionID]
 	s.mu.Unlock()
 	if ss == nil {
 		return

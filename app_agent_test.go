@@ -12,12 +12,11 @@ import (
 	"nodeshell/internal/settings"
 )
 
-// The agent bindings are the App's half of the assistant contract: the API key
-// goes to the OS keyring and never to settings.json, the renderer only ever
-// learns whether a key exists, and the endpoint fields are normalised by the
-// settings store. The agent loop itself is covered in internal/agent.
+// The agent bindings are the App's half of the assistant contract: API keys
+// go to the OS keyring under agent-api-key:<providerId> and never to
+// settings.json, the renderer only ever learns whether a key exists, and the
+// provider list is normalised by the settings store.
 
-// newAgentApp returns an App with an in-memory keyring in place of the OS one.
 func newAgentApp(t *testing.T) (*App, *fakeKeyring, string) {
 	t.Helper()
 	keys := &fakeKeyring{}
@@ -26,7 +25,7 @@ func newAgentApp(t *testing.T) (*App, *fakeKeyring, string) {
 	return a, keys, dir
 }
 
-func TestAgentStatusReportsDefaultsAndNoKey(t *testing.T) {
+func TestAgentStatusReportsEmptyOnFreshInstall(t *testing.T) {
 	a, _, _ := newAgentApp(t)
 
 	got, err := a.AgentStatus()
@@ -36,31 +35,45 @@ func TestAgentStatusReportsDefaultsAndNoKey(t *testing.T) {
 	if got.Configured {
 		t.Fatal("a fresh install must not report a configured agent")
 	}
-	if got.BaseURL != settings.Defaults.AgentBaseURL || got.Model != settings.Defaults.AgentModel {
-		t.Fatalf("status = %+v, want the settings defaults", got)
+	if len(got.Providers) != 0 {
+		t.Fatalf("providers = %+v, want none on a missing settings file", got.Providers)
 	}
 }
 
-// The key lands in the keyring under the fixed agent account, and the settings
-// file keeps only the endpoint fields.
-func TestAgentSetConfigStoresKeyInKeyringNotSettings(t *testing.T) {
+func TestAgentUpsertStoresKeyInKeyringNotSettings(t *testing.T) {
 	a, keys, dir := newAgentApp(t)
-	url, model, key := "https://api.deepseek.com/v1/", "deepseek-chat", "sk-secret-value"
 
-	got, err := a.AgentSetConfig(AgentConfigPatch{BaseURL: &url, Model: &model, APIKey: &key})
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name:    "DeepSeek",
+		BaseURL: "https://api.deepseek.com/v1/",
+		Models:  []string{"deepseek-chat"},
+	})
 	if err != nil {
-		t.Fatalf("AgentSetConfig: %v", err)
+		t.Fatalf("AgentUpsertProvider: %v", err)
 	}
-	if !got.Configured {
+	if len(got.Providers) != 1 {
+		t.Fatalf("providers = %+v, want one", got.Providers)
+	}
+	p := got.Providers[0]
+	if p.BaseURL != "https://api.deepseek.com/v1" || p.Models[0] != "deepseek-chat" {
+		t.Fatalf("status = %+v, want the normalised endpoint", p)
+	}
+	if p.HasKey {
+		t.Fatal("upsert must not invent a key")
+	}
+
+	key := "sk-secret-value"
+	got, err = a.AgentSetProviderKey(p.ID, key)
+	if err != nil {
+		t.Fatalf("AgentSetProviderKey: %v", err)
+	}
+	if !got.Configured || !got.Providers[0].HasKey {
 		t.Fatal("status must report configured after a key is stored")
 	}
-	if got.BaseURL != "https://api.deepseek.com/v1" || got.Model != model {
-		t.Fatalf("status = %+v, want the normalised endpoint", got)
-	}
 
-	stored := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccount]
+	stored := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccountFor(p.ID)]
 	if stored != key {
-		t.Fatalf("keyring entry = %q, want the API key under the agent account", stored)
+		t.Fatalf("keyring entry = %q, want the API key under the provider account", stored)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
@@ -75,66 +88,79 @@ func TestAgentSetConfigStoresKeyInKeyringNotSettings(t *testing.T) {
 	}
 }
 
-// The status payload is the only channel to the renderer, and it must never
-// carry the key itself.
 func TestAgentStatusNeverReturnsTheKey(t *testing.T) {
 	a, keys, _ := newAgentApp(t)
-	if err := keys.Set(credentials.ServiceName, agentKeyAccount, "sk-secret-value"); err != nil {
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	if err := keys.Set(credentials.ServiceName, agentKeyAccountFor(id), "sk-secret-value"); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := a.AgentStatus()
+	got, err = a.AgentStatus()
 	if err != nil {
 		t.Fatalf("AgentStatus: %v", err)
 	}
 	if !got.Configured {
 		t.Fatal("a stored key must report configured")
 	}
-	if strings.Contains(got.BaseURL+got.Model, "sk-secret") {
+	if strings.Contains(got.Providers[0].Name+got.Providers[0].BaseURL+got.DefaultModel, "sk-secret") {
 		t.Fatalf("status leaked the key: %+v", got)
 	}
 }
 
-// An empty key clears the entry; a patch that omits the key leaves it alone,
-// so saving the endpoint does not silently log the user out.
-func TestAgentSetConfigKeyClearAndPreserve(t *testing.T) {
+func TestAgentSetProviderKeyClearAndPreserve(t *testing.T) {
 	a, keys, _ := newAgentApp(t)
-	key := "sk-secret-value"
-	if _, err := a.AgentSetConfig(AgentConfigPatch{APIKey: &key}); err != nil {
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m", "n"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	if _, err := a.AgentSetProviderKey(id, "sk-secret-value"); err != nil {
 		t.Fatalf("store key: %v", err)
 	}
 
-	model := "gpt-4o"
-	got, err := a.AgentSetConfig(AgentConfigPatch{Model: &model})
+	got, err = a.AgentUpsertProvider(AgentProviderInput{
+		ID: id, Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m", "n", "o"},
+	})
 	if err != nil {
-		t.Fatalf("patch without key: %v", err)
+		t.Fatalf("upsert without key: %v", err)
 	}
-	if !got.Configured {
-		t.Fatal("a patch without an API key must keep the stored key")
+	if !got.Configured || !got.Providers[0].HasKey {
+		t.Fatal("updating models must keep the stored key")
 	}
 
-	empty := ""
-	got, err = a.AgentSetConfig(AgentConfigPatch{APIKey: &empty})
+	got, err = a.AgentSetProviderKey(id, "")
 	if err != nil {
 		t.Fatalf("clear key: %v", err)
 	}
 	if got.Configured {
 		t.Fatal("an empty key must clear the stored entry")
 	}
-	if _, ok := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccount]; ok {
+	if _, ok := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccountFor(id)]; ok {
 		t.Fatal("the keyring entry survived the clear")
 	}
-	// Clearing an absent key is idempotent, not an error.
-	if _, err := a.AgentSetConfig(AgentConfigPatch{APIKey: &empty}); err != nil {
+	if _, err := a.AgentSetProviderKey(id, ""); err != nil {
 		t.Fatalf("clearing an absent key must not fail: %v", err)
 	}
 }
 
-func TestAgentSetConfigRejectsOversizedKey(t *testing.T) {
+func TestAgentSetProviderKeyRejectsOversizedKey(t *testing.T) {
 	a, keys, _ := newAgentApp(t)
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	huge := strings.Repeat("k", agentKeyMaxLen+1)
-
-	if _, err := a.AgentSetConfig(AgentConfigPatch{APIKey: &huge}); err == nil {
+	if _, err := a.AgentSetProviderKey(got.Providers[0].ID, huge); err == nil {
 		t.Fatal("an oversized key must be rejected")
 	}
 	if len(keys.snapshot()) != 0 {
@@ -142,28 +168,120 @@ func TestAgentSetConfigRejectsOversizedKey(t *testing.T) {
 	}
 }
 
-// The config loader is what the agent service calls per prompt: without a key
-// it must reject with the not-configured sentinel rather than build a request.
-func TestAgentConfigLoaderRequiresKey(t *testing.T) {
+func TestAgentConfigForRequiresKeyAndKnownModel(t *testing.T) {
 	a, keys, _ := newAgentApp(t)
 
-	if _, err := a.agentConfig(); !errors.Is(err, agent.ErrNotConfigured) {
-		t.Fatalf("agentConfig error = %v, want ErrNotConfigured", err)
+	if _, err := a.agentConfigFor("p", "m"); err == nil {
+		t.Fatal("missing provider must reject")
 	}
-	if err := keys.Set(credentials.ServiceName, agentKeyAccount, "sk-secret-value"); err != nil {
+
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := a.agentConfig()
-	if err != nil {
-		t.Fatalf("agentConfig: %v", err)
+	id := got.Providers[0].ID
+	if _, err := a.agentConfigFor(id, "m"); !errors.Is(err, agent.ErrNotConfigured) {
+		t.Fatalf("agentConfigFor error = %v, want ErrNotConfigured", err)
 	}
-	if cfg.APIKey != "sk-secret-value" || cfg.Model != settings.Defaults.AgentModel {
+	if err := keys.Set(credentials.ServiceName, agentKeyAccountFor(id), "sk-secret-value"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := a.agentConfigFor(id, "m")
+	if err != nil {
+		t.Fatalf("agentConfigFor: %v", err)
+	}
+	if cfg.APIKey != "sk-secret-value" || cfg.Model != "m" || cfg.BaseURL != "https://x.test/v1" {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if _, err := a.agentConfigFor(id, "other"); err == nil {
+		t.Fatal("a model not on the provider must be rejected")
 	}
 }
 
-// A keyring read failure is a coded, secret-free error, not a panic and not a
-// silent "not configured".
+func TestAgentLegacyMigrationCopiesKeyAndPersistsProvider(t *testing.T) {
+	a, keys, dir := newAgentApp(t)
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(
+		`{"agentBaseUrl":"https://api.deepseek.com/v1","agentModel":"deepseek-chat"}`,
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.Set(credentials.ServiceName, agentKeyAccount, "sk-legacy"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := a.AgentStatus()
+	if err != nil {
+		t.Fatalf("AgentStatus: %v", err)
+	}
+	if !got.Configured || len(got.Providers) != 1 {
+		t.Fatalf("status = %+v, want one configured legacy provider", got)
+	}
+	p := got.Providers[0]
+	if p.ID != settings.LegacyProviderID || p.BaseURL != "https://api.deepseek.com/v1" || p.Models[0] != "deepseek-chat" {
+		t.Fatalf("legacy provider = %+v", p)
+	}
+	if keys.snapshot()[credentials.ServiceName+":"+agentKeyAccountFor(settings.LegacyProviderID)] != "sk-legacy" {
+		t.Fatal("the legacy key was not copied onto the provider account")
+	}
+	if _, ok := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccount]; ok {
+		t.Fatal("the old unprefixed keyring account must be removed after copy")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"id": "legacy"`) && !strings.Contains(string(raw), `"id":"legacy"`) {
+		t.Fatalf("legacy provider was not persisted: %s", raw)
+	}
+}
+
+func TestAgentDeleteProviderRemovesKey(t *testing.T) {
+	a, keys, _ := newAgentApp(t)
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	if _, err := a.AgentSetProviderKey(id, "sk"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = a.AgentDeleteProvider(id)
+	if err != nil {
+		t.Fatalf("AgentDeleteProvider: %v", err)
+	}
+	if len(got.Providers) != 0 {
+		t.Fatalf("providers = %+v, want none", got.Providers)
+	}
+	if _, ok := keys.snapshot()[credentials.ServiceName+":"+agentKeyAccountFor(id)]; ok {
+		t.Fatal("deleting a provider must drop its key")
+	}
+}
+
+func TestAgentSetDefaultModel(t *testing.T) {
+	a, _, _ := newAgentApp(t)
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"a", "b"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	got, err = a.AgentSetDefaultModel(id, "b")
+	if err != nil {
+		t.Fatalf("AgentSetDefaultModel: %v", err)
+	}
+	if got.DefaultProviderID != id || got.DefaultModel != "b" {
+		t.Fatalf("default = (%q, %q)", got.DefaultProviderID, got.DefaultModel)
+	}
+	if _, err := a.AgentSetDefaultModel(id, "missing"); err == nil {
+		t.Fatal("a model not on the provider must be rejected")
+	}
+}
+
 func TestAgentStatusSurfacesKeyringFailure(t *testing.T) {
 	a, keys, _ := newAgentApp(t)
 	keys.getErr = errors.New("keyring unavailable")
@@ -175,11 +293,9 @@ func TestAgentStatusSurfacesKeyringFailure(t *testing.T) {
 	}
 }
 
-// A prompt for a session that does not exist is rejected by the service, and
-// the bindings work only after startup wired the agent.
 func TestAgentBindingsRequireWiring(t *testing.T) {
 	bare := &App{}
-	if err := bare.AgentPrompt("s1", "host", "hello"); !errors.Is(err, errBackendNotInitialised) {
+	if err := bare.AgentPrompt("s1", "host", "hello", "p", "m"); !errors.Is(err, errBackendNotInitialised) {
 		t.Fatalf("AgentPrompt before startup = %v, want errBackendNotInitialised", err)
 	}
 	if err := bare.AgentAbort("s1"); !errors.Is(err, errBackendNotInitialised) {
@@ -199,8 +315,7 @@ func TestAgentBindingsRequireWiring(t *testing.T) {
 	if a.agent == nil {
 		t.Fatal("NewAppWithServices must wire the agent service")
 	}
-	// Unconfigured, so the prompt is rejected before any request is attempted.
-	if err := a.AgentPrompt("s1", "host", "hello"); err == nil {
+	if err := a.AgentPrompt("s1", "host", "hello", "p", "m"); err == nil {
 		t.Fatal("an unconfigured agent must reject the prompt")
 	}
 }

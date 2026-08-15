@@ -57,7 +57,7 @@ type ClosedEvent struct {
 
 // ErrorEvent is the session:error payload (matches SessionErrorEvent).
 type ErrorEvent struct {
-	SessionID string `json:"sessionId"`
+	SessionID string   `json:"sessionId"`
 	Error     AppError `json:"error"`
 }
 
@@ -132,6 +132,13 @@ type SFTPProvider interface {
 // about exec.
 type ExecProvider interface {
 	Exec(ctx context.Context, command string, timeout time.Duration) (string, error)
+}
+
+// DialProvider is implemented by Conns that can open a TCP connection through
+// the SSH session (*sshclient.Session does, via direct-tcpip). Terminal-path
+// fakes never need to know about port forwarding.
+type DialProvider interface {
+	Dial(network, addr string) (net.Conn, error)
 }
 
 // ConnectorFunc adapts a plain function to the Connector interface.
@@ -394,6 +401,31 @@ func (m *Manager) Exec(sessionID string, ctx context.Context, command string, ti
 		return "", &Error{Code: apperror.Unknown, Message: "Exec is unavailable for this session"}
 	}
 	return p.Exec(ctx, command, timeout)
+}
+
+// CanDial reports whether the session can open a direct-tcpip channel.
+func (m *Manager) CanDial(sessionID string) error {
+	sess := m.get(sessionID)
+	if sess == nil {
+		return &Error{Code: apperror.SessionNotFound, Message: fmt.Sprintf("Session not found: %s", sessionID)}
+	}
+	if _, ok := sess.conn.(DialProvider); !ok {
+		return &Error{Code: apperror.Unknown, Message: "Port forwarding is unavailable for this session"}
+	}
+	return nil
+}
+
+// Dial opens a TCP connection through the session (SSH direct-tcpip).
+func (m *Manager) Dial(sessionID, network, addr string) (net.Conn, error) {
+	sess := m.get(sessionID)
+	if sess == nil {
+		return nil, &Error{Code: apperror.SessionNotFound, Message: fmt.Sprintf("Session not found: %s", sessionID)}
+	}
+	p, ok := sess.conn.(DialProvider)
+	if !ok {
+		return nil, &Error{Code: apperror.Unknown, Message: "Port forwarding is unavailable for this session"}
+	}
+	return p.Dial(network, addr)
 }
 
 // DisposeAll tears down every session and in-flight connect quietly (app
