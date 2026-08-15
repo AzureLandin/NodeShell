@@ -5,6 +5,7 @@ import { faFile, faFolder } from '@fortawesome/free-solid-svg-icons'
 import type { SftpTransferProgressEvent } from '../../../shared/types'
 import { isEditableTextFile, MAX_EDITABLE_TEXT_BYTES } from '../../../shared/editable-text'
 import { ConfirmModal } from './ConfirmModal'
+import { SftpContextMenu } from './SftpContextMenu'
 import { SftpTextEditorModal, type SftpTextEditorTarget } from './SftpTextEditorModal'
 
 interface SftpEntry {
@@ -66,6 +67,7 @@ export function SftpPanel({
   const [dragOver, setDragOver] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SftpEntry | null>(null)
   const [editTarget, setEditTarget] = useState<SftpTextEditorTarget | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: SftpEntry } | null>(null)
   /** Session id whose listing is currently cached in UI state. */
   const loadedForSessionRef = useRef<string | null>(null)
   const requestGenRef = useRef(0)
@@ -114,6 +116,7 @@ export function SftpPanel({
         setSelectedPath(null)
         setTransfer(null)
         setEditTarget(null)
+        setMenu(null)
         loadedForSessionRef.current = null
       }
       return
@@ -123,6 +126,33 @@ export function SftpPanel({
       void refresh()
     }
   }, [expanded, connected, sessionId, refresh])
+
+  useEffect(() => {
+    if (!expanded) setMenu(null)
+  }, [expanded])
+
+  useEffect(() => {
+    if (!menu) return
+    const onMouseDown = (e: MouseEvent): void => {
+      // The opening right-click is mousedown → contextmenu. Ignore button 2 so
+      // that listener cannot dismiss the menu in the same gesture.
+      if (e.button === 2) return
+      const target = e.target as HTMLElement
+      if (target.closest('[data-testid="sftp-context-menu"]')) return
+      setMenu(null)
+    }
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setMenu(null)
+    }
+    window.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menu])
 
   useEffect(() => {
     const clearTimer = (): void => {
@@ -278,6 +308,13 @@ export function SftpPanel({
     setEditTarget({ name: entry.name, remotePath: entry.name })
   }
 
+  const openEntryMenu = (entry: SftpEntry, e: React.MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedPath(entry.path)
+    setMenu({ x: e.clientX, y: e.clientY, entry })
+  }
+
   const handleFileActivate = (entry: SftpEntry): void => {
     if (entry.isDirectory) {
       void openDir(entry.name)
@@ -352,7 +389,7 @@ export function SftpPanel({
   }
 
   return (
-    <div className={`sftp-panel${expanded ? ' sftp-panel-expanded' : ''}`}>
+    <div className={`sftp-panel glass${expanded ? ' sftp-panel-expanded' : ''}`}>
       <button type="button" className="sftp-panel-toggle" onClick={onToggle}>
         <span className="sftp-panel-chevron" aria-hidden>
           {expanded ? '▾' : '▴'}
@@ -500,7 +537,6 @@ export function SftpPanel({
                   <span className="sftp-col-name">{t('sftp.colName')}</span>
                   <span className="sftp-col-size">{t('sftp.colSize')}</span>
                   <span className="sftp-col-mtime">{t('sftp.colModified')}</span>
-                  <span className="sftp-col-actions" />
                 </div>
 
                 {loading && entries.length === 0 ? (
@@ -519,12 +555,14 @@ export function SftpPanel({
                         <li
                           key={entry.path}
                           className={`sftp-item${entry.isDirectory ? ' sftp-item-dir' : ''}${selected ? ' sftp-item-selected' : ''}`}
+                          onContextMenu={(e) => openEntryMenu(entry, e)}
                         >
                           <button
                             type="button"
                             className="sftp-item-main"
                             onClick={() => setSelectedPath(entry.path)}
                             onDoubleClick={() => handleFileActivate(entry)}
+                            onContextMenu={(e) => openEntryMenu(entry, e)}
                           >
                             <span className="sftp-col-name" title={entry.name}>
                               <FontAwesomeIcon
@@ -539,40 +577,6 @@ export function SftpPanel({
                             </span>
                             <span className="sftp-col-mtime">{formatTime(entry.modifyTime)}</span>
                           </button>
-                          <div className="sftp-item-actions">
-                            {!entry.isDirectory && isEditableTextFile(entry.name) && (
-                              <button
-                                type="button"
-                                className="btn-secondary btn-sm"
-                                onClick={() => openEditor(entry)}
-                              >
-                                {t('sftp.edit')}
-                              </button>
-                            )}
-                            {!entry.isDirectory && (
-                              <button
-                                type="button"
-                                className="btn-secondary btn-sm"
-                                onClick={() => void handleDownload(entry)}
-                              >
-                                {t('sftp.download')}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="btn-secondary btn-sm"
-                              onClick={() => void handleRename(entry)}
-                            >
-                              {t('sftp.rename')}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-danger btn-sm"
-                              onClick={() => handleDelete(entry)}
-                            >
-                              {t('sftp.delete')}
-                            </button>
-                          </div>
                         </li>
                       )
                     })}
@@ -584,6 +588,20 @@ export function SftpPanel({
           </div>
         </div>
       </div>
+
+      {menu && (
+        <SftpContextMenu
+          x={menu.x}
+          y={menu.y}
+          canEdit={!menu.entry.isDirectory}
+          canDownload={!menu.entry.isDirectory}
+          onEdit={() => openEditor(menu.entry)}
+          onDownload={() => void handleDownload(menu.entry)}
+          onRename={() => void handleRename(menu.entry)}
+          onDelete={() => handleDelete(menu.entry)}
+          onClose={() => setMenu(null)}
+        />
+      )}
 
       {deleteTarget && (
         <ConfirmModal

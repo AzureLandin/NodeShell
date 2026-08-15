@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUp, faStop, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faArrowUp, faEllipsis, faStop, faTerminal } from '@fortawesome/free-solid-svg-icons'
 import { parseIpcThrownError } from '../../../shared/ipc-error'
 import type { AgentToolEvent } from '../../../shared/types'
 import { AgentMarkdown } from './AgentMarkdown'
@@ -102,8 +102,10 @@ export function AgentPanel({
   const [configured, setConfigured] = useState<boolean | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const genRef = useRef<Record<string, number>>({})
   const runGenRef = useRef<Record<string, number>>({})
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const eventLive = (sessionId: string): boolean => {
     const gen = genRef.current[sessionId] ?? 0
@@ -135,6 +137,15 @@ export function AgentPanel({
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDoc = (e: MouseEvent): void => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [menuOpen])
 
   useEffect(() => {
     const agent = window.api.agent
@@ -262,24 +273,42 @@ export function AgentPanel({
     <div className="agent-panel">
       <div className="agent-head">
         <h2 className="agent-head-title">{t('agent.title')}</h2>
-        <div className="agent-head-actions">
+        <div className="agent-head-menu" ref={menuRef}>
           <button
             type="button"
-            className="agent-head-action"
-            onClick={clear}
-            disabled={!activeSessionId || entries.length === 0}
+            className="agent-head-action agent-head-more"
+            aria-label={t('agent.menu')}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
           >
-            {t('agent.clear')}
+            <FontAwesomeIcon icon={faEllipsis} aria-hidden />
           </button>
-          {onHide ? (
-            <button
-              type="button"
-              className="agent-head-action agent-head-close"
-              aria-label={t('agent.hide')}
-              onClick={onHide}
-            >
-              <FontAwesomeIcon icon={faXmark} aria-hidden />
-            </button>
+          {menuOpen ? (
+            <div className="agent-head-menu-pop" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!activeSessionId || entries.length === 0}
+                onClick={() => {
+                  clear()
+                  setMenuOpen(false)
+                }}
+              >
+                {t('agent.clear')}
+              </button>
+              {onHide ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onHide()
+                    setMenuOpen(false)
+                  }}
+                >
+                  {t('agent.hide')}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
@@ -294,8 +323,14 @@ export function AgentPanel({
       )}
 
       <div className="agent-log" ref={listRef}>
-        {!usable && <p className="agent-empty">{t('agent.needSession')}</p>}
-        {usable && entries.length === 0 && <p className="agent-empty">{t('agent.empty')}</p>}
+        {entries.length === 0 && (
+          <div className="agent-empty">
+            <div className="agent-empty-icon" aria-hidden>
+              <FontAwesomeIcon icon={faTerminal} />
+            </div>
+            <p>{!usable ? t('agent.needSession') : t('agent.empty')}</p>
+          </div>
+        )}
         {renderEntries(entries)}
         {isRunning && (
           <div className="agent-typing" aria-live="polite">

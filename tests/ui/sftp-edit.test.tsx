@@ -70,14 +70,16 @@ async function renderExpandedPanel(): Promise<
 }
 
 describe('SftpPanel text editing', () => {
-  it('shows Edit for text files and opens the editor on double-click', async () => {
+  it('shows Edit in the context menu for any file, and opens the editor on double-click for text', async () => {
     const { fake } = await renderExpandedPanel()
     fake.mocks.sftp.readText.mockResolvedValue({
       path: '/home/user/readme.md',
       content: 'hello'
     })
 
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
+    fireEvent.contextMenu(screen.getByText('readme.md').closest('li') as HTMLElement)
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+
     fireEvent.doubleClick(screen.getByText('readme.md'))
 
     await waitFor(() =>
@@ -85,6 +87,8 @@ describe('SftpPanel text editing', () => {
     )
     expect(await screen.findByDisplayValue('hello')).toBeInTheDocument()
     expect(fake.mocks.sftp.download).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.sftp-editor-modal')).not.toBeNull()
+    expect(document.querySelector('.sftp-panel .sftp-editor-modal')).toBeNull()
   })
 
   it('downloads non-text files on double-click', async () => {
@@ -96,6 +100,23 @@ describe('SftpPanel text editing', () => {
       expect(fake.mocks.sftp.download).toHaveBeenCalledWith('s1', 'photo.png', 'photo.png')
     )
     expect(fake.mocks.sftp.readText).not.toHaveBeenCalled()
+  })
+
+  it('opens the editor from the context menu for any file format', async () => {
+    const { fake } = await renderExpandedPanel()
+    fake.mocks.sftp.readText.mockResolvedValue({
+      path: '/home/user/photo.png',
+      content: 'PNG'
+    })
+
+    fireEvent.contextMenu(screen.getByText('photo.png').closest('li') as HTMLElement)
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+
+    await waitFor(() =>
+      expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', 'photo.png')
+    )
+    expect(await screen.findByDisplayValue('PNG')).toBeInTheDocument()
   })
 
   it('refuses to open files over the 512KiB GUI cap', async () => {

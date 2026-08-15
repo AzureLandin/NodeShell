@@ -38,7 +38,8 @@
     "disconnected": "会话已断开",
     "error": "连接错误",
     "reconnect": "重新连接",
-    "placeholder": "点击左上角「主机」选择并连接"
+    "placeholder": "点击左上角「主机」选择并连接",
+    "newTab": "新建会话"
   },
   "terminal": {
     "copy": "复制",
@@ -152,12 +153,14 @@
   },
   "sidebar": {
     "placeholderTitle": "监控",
-    "placeholderBody": "此处将用于系统监控等信息，敬请期待。"
+    "placeholderBody": "此处将用于系统监控等信息，敬请期待。",
+    "railLabel": "应用"
   },
   "agent": {
     "title": "Agent",
     "hide": "隐藏 Agent",
     "show": "显示 Agent",
+    "menu": "Agent 菜单",
     "needSession": "请先连接会话后再使用 Agent。",
     "notConfigured": "请先在设置中填写 API Key 后使用 Agent。",
     "empty": "可以询问当前主机的情况。Agent 会通过当前 SSH 会话执行命令、读写文件。",
@@ -193,6 +196,8 @@
   },
   "monitor": {
     "title": "监控",
+    "hide": "隐藏监控",
+    "show": "显示监控",
     "needSession": "连接会话后显示远程 CPU、内存与网络。",
     "unavailable": "当前主机暂不支持监控（需 Linux /proc）。",
     "sampling": "采样中…",

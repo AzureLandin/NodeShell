@@ -346,4 +346,35 @@ describe('App tab switching', () => {
     expect(document.querySelector('.agent-dock')).not.toHaveClass('is-collapsed')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('opens settings from the icon rail', async () => {
+    await renderApp([])
+    const user = userEvent.setup()
+    const rail = document.querySelector('.icon-rail') as HTMLElement
+    await user.click(within(rail).getByRole('button', { name: 'Settings' }))
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+  })
+
+  it('shows the monitor sheet by default and collapses it from the icon rail', async () => {
+    await renderApp([])
+    const user = userEvent.setup()
+
+    expect(screen.getByRole('heading', { name: 'Monitor' })).toBeVisible()
+    expect(document.querySelector('.sidebar')).not.toHaveClass('is-collapsed')
+
+    const rail = document.querySelector('.icon-rail') as HTMLElement
+    const toggle = within(rail).getByRole('button', { name: 'Hide monitor' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(toggle)
+    expect(screen.queryByRole('heading', { name: 'Monitor' })).not.toBeInTheDocument()
+    expect(document.querySelector('.sidebar')).toHaveClass('is-collapsed')
+    expect(toggle).toHaveAccessibleName('Show monitor')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(toggle)
+    expect(screen.getByRole('heading', { name: 'Monitor' })).toBeVisible()
+    expect(document.querySelector('.sidebar')).not.toHaveClass('is-collapsed')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  })
 })

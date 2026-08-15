@@ -61,36 +61,114 @@ select {
   font: inherit;
 }
 
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 .app {
   display: flex;
   flex-direction: row;
   height: 100%;
   overflow: hidden;
+  gap: 0;
+  padding: var(--chrome-gap);
+  background: var(--bg-app);
   --app-bottom-bar-height: 48px;
-  /* Shared height so the session tab bar and the agent-dock header meet. */
-  --app-tab-bar-height: 36px;
+  --app-tab-bar-height: 40px;
+}
+
+.icon-rail {
+  width: 48px;
+  flex-shrink: 0;
+  margin-right: var(--chrome-gap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-radius: var(--radius-sheet);
+}
+
+button.icon-rail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+button.icon-rail-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+button.icon-rail-btn[aria-pressed='true'] {
+  background: var(--accent-info);
+  color: var(--text-on-accent);
 }
 
 .sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border-default);
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-width: 0;
+  margin-right: var(--chrome-gap);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-radius: var(--radius-sheet);
+  transition:
+    width var(--dur-med) var(--ease-spring),
+    margin-right var(--dur-med) var(--ease-spring);
+}
+
+.sidebar.is-collapsed {
+  width: 0;
+  margin-right: 0;
+  border-width: 0;
+}
+
+.sidebar-inner {
+  width: 240px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
 }
 
 .main {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-app);
+  background: var(--bg-terminal);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  border-radius: var(--radius-sheet);
 }
 
 .main-with-sessions {
@@ -113,16 +191,20 @@ select {
   width: 100%;
 }
 
+.session-tab-bar.glass {
+  border: none;
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: none;
+}
+
 .session-tab-bar {
   display: flex;
   flex-shrink: 0;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
   height: var(--app-tab-bar-height);
   min-height: var(--app-tab-bar-height);
-  padding: 6px 6px 0;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-default);
+  padding: 0 8px;
   overflow: hidden;
 }
 
@@ -131,12 +213,11 @@ button.hosts-launcher {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-  margin: 0 6px 0 2px;
-  padding: 6px 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
+  margin: 0;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
@@ -159,7 +240,7 @@ button.hosts-launcher:hover:not(:disabled) {
   align-self: stretch;
   margin-left: auto;
   flex-shrink: 0;
-  padding: 0 6px 5px 8px;
+  padding: 0 2px 0 8px;
 }
 
 button.session-agent-toggle {
@@ -173,7 +254,7 @@ button.session-agent-toggle {
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
 }
@@ -184,8 +265,8 @@ button.session-agent-toggle:hover {
 }
 
 button.session-agent-toggle[aria-pressed='true'] {
-  color: var(--text-bright);
-  background: var(--bg-elevated);
+  color: var(--text-on-accent);
+  background: var(--accent-info);
 }
 
 .session-agent-toggle-icon {
@@ -193,28 +274,32 @@ button.session-agent-toggle[aria-pressed='true'] {
   color: var(--accent-info);
 }
 
+button.session-agent-toggle[aria-pressed='true'] .session-agent-toggle-icon {
+  color: inherit;
+}
+
 .session-tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   font-size: 13px;
+  font-weight: 700;
 }
 
 .session-tab:hover {
-  background: var(--bg-elevated);
+  background: var(--bg-hover);
 }
 
 .session-tab-active {
-  background: var(--bg-app);
-  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  border-color: var(--glass-border);
 }
 
 .session-tab-title {
@@ -235,6 +320,26 @@ button.session-agent-toggle[aria-pressed='true'] {
 .session-tab-close:hover {
   color: var(--text-bright);
   background: transparent;
+}
+
+button.session-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+button.session-tab-add:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .session-status-dot {
@@ -330,6 +435,12 @@ button.session-agent-toggle[aria-pressed='true'] {
 
 /* SFTP bottom panel */
 
+.sftp-panel.glass {
+  border: none;
+  border-top: 1px solid var(--glass-border);
+  box-shadow: none;
+}
+
 .sftp-panel {
   --sftp-body-height: min(38vh, 340px);
   flex: 0 0 auto;
@@ -340,7 +451,7 @@ button.session-agent-toggle[aria-pressed='true'] {
      wrapper + a transform transition on the chevron makes the title text fail to
      paint for the duration of the expand/collapse animation. Clipping belongs on
      .sftp-panel-collapse only. */
-  background: var(--bg-elevated);
+  background: transparent;
 }
 
 .sftp-panel-collapse {
@@ -348,7 +459,7 @@ button.session-agent-toggle[aria-pressed='true'] {
   height: 0;
   min-height: 0;
   overflow: hidden;
-  transition: height 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height var(--dur-med) var(--ease-spring);
 }
 
 .sftp-panel-expanded .sftp-panel-collapse {
@@ -375,10 +486,10 @@ button.sftp-panel-toggle {
   min-height: var(--app-bottom-bar-height);
   flex: 0 0 auto;
   padding: 0 14px;
-  background: var(--bg-panel);
+  background: transparent;
   border: none;
   border-radius: 0;
-  border-top: 1px solid var(--border-default);
+  border-top: 1px solid var(--glass-border);
   color: var(--text-tertiary);
   font-size: 14px;
   line-height: 1;
@@ -393,7 +504,7 @@ button.sftp-panel-toggle {
 }
 
 button.sftp-panel-toggle:hover:not(:disabled) {
-  background: var(--bg-card);
+  background: var(--bg-hover);
   color: var(--text-bright);
 }
 
@@ -402,11 +513,11 @@ button.sftp-panel-toggle:focus-visible {
   outline: none;
   box-shadow: none;
   border: none;
-  border-top: 1px solid var(--border-default);
+  border-top: 1px solid var(--glass-border);
 }
 
 .sftp-panel-expanded button.sftp-panel-toggle {
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .sftp-panel-expanded button.sftp-panel-toggle:focus,
@@ -425,7 +536,7 @@ button.sftp-panel-toggle:focus-visible {
 }
 
 .sftp-panel-title {
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1;
   flex-shrink: 0;
@@ -461,7 +572,7 @@ button.sftp-panel-toggle:focus-visible {
   min-height: 0;
   padding: 10px 10px 8px;
   overflow: hidden;
-  background: var(--bg-elevated);
+  background: transparent;
   box-sizing: border-box;
   /* Wails file-drop target: native drops over the panel resolve to absolute
      paths (inherited by every child, so the whole panel body is a target). */
@@ -554,6 +665,7 @@ button.sftp-panel-toggle:focus-visible {
 .sftp-transfer-label {
   flex-shrink: 0;
   color: var(--text-warm);
+  font-weight: 700;
 }
 
 .sftp-transfer-name {
@@ -609,8 +721,7 @@ button.sftp-panel-toggle:focus-visible {
 .sftp-list-header,
 .sftp-item {
   display: grid;
-  /* Actions column is auto so 3- or 4-button rows (Edit) keep labels horizontal. */
-  grid-template-columns: minmax(0, 1fr) 88px 148px auto;
+  grid-template-columns: minmax(0, 1fr) 88px 148px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -623,7 +734,7 @@ button.sftp-panel-toggle:focus-visible {
   border-bottom: 1px solid var(--bg-hover-strong);
   color: var(--text-muted);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -636,6 +747,7 @@ button.sftp-panel-toggle:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--sftp-name);
+  font-weight: 700;
 }
 
 .sftp-col-size {
@@ -652,10 +764,6 @@ button.sftp-panel-toggle:focus-visible {
   color: var(--sftp-name);
   font-size: 11px;
   opacity: 0.72;
-}
-
-.sftp-col-actions {
-  width: 100%;
 }
 
 .sftp-list {
@@ -732,19 +840,7 @@ button.sftp-item-main {
 
 .sftp-item-dir .sftp-col-name {
   color: var(--sftp-name-dir);
-  font-weight: 500;
-}
-
-.sftp-item-actions {
-  display: flex;
-  gap: 4px;
-  justify-content: flex-end;
-  flex-shrink: 0;
-}
-
-.sftp-item-actions .btn-sm {
-  flex-shrink: 0;
-  white-space: nowrap;
+  font-weight: 700;
 }
 
 .sftp-placeholder {
@@ -789,7 +885,7 @@ button.sftp-item-main {
 @media (max-width: 900px) {
   .sftp-list-header,
   .sftp-item {
-    grid-template-columns: minmax(0, 1fr) 72px auto;
+    grid-template-columns: minmax(0, 1fr) 72px;
   }
 
   .sftp-col-mtime {
@@ -811,6 +907,8 @@ button.sftp-item-main {
   align-items: center;
   justify-content: center;
   z-index: 1100;
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .confirm-modal-overlay {
@@ -824,27 +922,35 @@ button.sftp-item-main {
 /* ModalShell staged open/close — legacy overlays keep solid dim above */
 .modal-overlay--animated {
   background: rgba(0, 0, 0, 0);
-  transition: background-color 200ms ease;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: background-color var(--dur-med) var(--ease-spring);
 }
 
 .modal-overlay--animated.is-open {
   background: var(--bg-overlay);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .modal-overlay--animated.is-closing {
   background: rgba(0, 0, 0, 0);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sheet);
   padding: 20px 22px 18px;
   width: min(380px, calc(100vw - 40px));
   max-width: calc(100vw - 40px);
   box-sizing: border-box;
   overflow-x: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-modal), var(--glass-highlight);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .modal.password-modal,
@@ -857,12 +963,28 @@ button.sftp-item-main {
   width: min(460px, calc(100vw - 40px));
 }
 
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .modal,
+  .modal-overlay,
+  .modal-overlay--animated.is-open,
+  .app-select-content {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .modal-overlay,
+  .modal-overlay--animated.is-open {
+    background: var(--bg-overlay);
+  }
+}
+
 .modal.modal--animated {
   opacity: 0;
   transform: scale(0.96);
   transition:
-    opacity 200ms ease,
-    transform 200ms ease;
+    opacity var(--dur-med) var(--ease-spring),
+    transform var(--dur-med) var(--ease-spring);
 }
 
 .modal.modal--animated.is-open {
@@ -903,7 +1025,7 @@ button.sftp-item-main {
 .modal-title {
   margin: 0 0 6px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -1054,7 +1176,7 @@ button.sftp-item-main {
   gap: 12px;
   padding: 8px 10px;
   border: 1px solid var(--border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-panel);
 }
 
@@ -1066,7 +1188,7 @@ button.sftp-item-main {
 .about-meta dd {
   margin: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-bright);
 }
 
@@ -1148,6 +1270,7 @@ button.sftp-item-main {
 .settings-section legend {
   padding: 0 6px;
   font-size: 13px;
+  font-weight: 700;
   color: var(--text-tertiary);
 }
 
@@ -1166,7 +1289,7 @@ button.sftp-item-main {
 
 .mcp-register-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-tertiary);
   margin-bottom: 6px;
 }
@@ -1194,8 +1317,8 @@ button.sftp-item-main {
   gap: 10px;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control);
   background: var(--bg-panel);
 }
 
@@ -1220,7 +1343,7 @@ button.sftp-item-main {
 .mcp-register-name {
   font-size: 13px;
   color: var(--text-bright);
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .mcp-register-path {
@@ -1266,7 +1389,7 @@ button.sftp-item-main {
   margin: 0;
   padding: 6px 8px;
   border: 1px solid var(--border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-app);
   color: var(--text-primary);
   font-size: 12px;
@@ -1283,7 +1406,7 @@ button.sftp-item-main {
 .mcp-format-tab {
   padding: 4px 8px;
   border: 1px solid var(--border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-button);
   background: transparent;
   color: var(--text-tertiary);
   font-size: 12px;
@@ -1308,7 +1431,7 @@ button.sftp-item-main {
   margin: 0 0 8px;
   padding: 8px 10px;
   border: 1px solid var(--border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-app);
   color: var(--text-primary);
   font-size: 12px;
@@ -1370,13 +1493,14 @@ button.sftp-item-main {
 }
 
 .permission-modal-source {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
 .permission-modal-action {
   margin: 0 0 8px;
   font-size: 13px;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
@@ -1433,15 +1557,18 @@ button.sftp-item-main {
   flex-shrink: 0;
   min-width: 0;
   min-height: 0;
+  margin-left: var(--chrome-gap);
   overflow: hidden;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border-default);
-  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: var(--radius-sheet);
+  transition:
+    width var(--dur-med) var(--ease-spring),
+    margin-left var(--dur-med) var(--ease-spring);
 }
 
 .agent-dock.is-collapsed {
   width: 0;
-  border-left-width: 0;
+  margin-left: 0;
+  border-width: 0;
 }
 
 .agent-dock-inner {
@@ -1476,14 +1603,14 @@ button.sftp-item-main {
   height: var(--app-tab-bar-height);
   min-height: var(--app-tab-bar-height);
   padding: 0 12px;
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 
 .agent-head-title {
   margin: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
@@ -1517,12 +1644,72 @@ button.sftp-item-main {
   width: 22px;
   height: 22px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-button);
   font-size: 12px;
 }
 
 .agent-head-close:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.agent-head-menu {
+  position: relative;
+}
+
+button.agent-head-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-button);
+  font-size: 13px;
+}
+
+button.agent-head-more:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.agent-head-menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 8;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-head-menu-pop button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: var(--radius-button);
+}
+
+.agent-head-menu-pop button:hover:not(:disabled) {
+  background: var(--accent-info);
+  color: var(--text-on-accent);
+}
+
+.agent-head-menu-pop button:disabled {
+  color: var(--text-muted);
+  cursor: default;
 }
 
 .agent-notice {
@@ -1557,10 +1744,31 @@ button.sftp-item-main {
 .agent-empty {
   margin: auto 0;
   padding: 24px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   font-size: 13px;
   line-height: 1.6;
   text-align: center;
   color: var(--text-muted);
+}
+
+.agent-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--accent-info);
+  font-size: 18px;
+}
+
+.agent-empty p {
+  margin: 0;
+  max-width: 28ch;
 }
 
 .agent-msg {
@@ -1625,7 +1833,7 @@ button.sftp-item-main {
 .agent-md h5,
 .agent-md h6 {
   margin: 1em 0 0.4em;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
   color: var(--text-heading);
 }
@@ -1736,7 +1944,7 @@ button.sftp-item-main {
 
 .agent-md th {
   background: var(--bg-elevated);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .agent-md hr {
@@ -1769,10 +1977,11 @@ button.sftp-item-main {
   margin: 0;
   padding: 4px 6px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-button);
   background: transparent;
   color: inherit;
   font: inherit;
+  font-weight: 700;
   text-align: left;
   cursor: pointer;
 }
@@ -1801,7 +2010,7 @@ button.sftp-item-main {
 .agent-tool-verb {
   flex-shrink: 0;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
@@ -1955,8 +2164,8 @@ button.sftp-item-main {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--text-primary);
-  color: var(--bg-panel);
+  background: var(--accent-info);
+  color: var(--text-on-accent);
   font-size: 13px;
   cursor: pointer;
 }
@@ -1966,18 +2175,21 @@ button.sftp-item-main {
 }
 
 .agent-send:disabled {
-  opacity: 0.28;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  opacity: 1;
   cursor: default;
 }
 
 .agent-send.is-stop {
   background: var(--text-primary);
+  color: var(--bg-panel);
 }
 
 .sidebar-placeholder-title {
   margin: 0 0 8px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--monitor-text);
 }
 
@@ -2008,6 +2220,26 @@ button.sftp-item-main {
   white-space: nowrap;
 }
 
+.monitor-host-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--monitor-text);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.monitor-host-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .monitor-metric {
   display: grid;
   grid-template-columns: 42px 1fr;
@@ -2017,6 +2249,7 @@ button.sftp-item-main {
 
 .monitor-metric-label {
   font-size: 12px;
+  font-weight: 700;
   color: var(--monitor-text-muted);
 }
 
@@ -2057,7 +2290,7 @@ button.sftp-item-main {
   height: 100%;
   padding: 0 6px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--monitor-bar-text);
   text-shadow: var(--monitor-bar-text-shadow);
   font-variant-numeric: tabular-nums;
@@ -2086,7 +2319,7 @@ button.sftp-item-main {
 .monitor-proc-head {
   background: var(--accent-primary-dark);
   color: var(--text-on-accent);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .monitor-proc-head span,
@@ -2272,7 +2505,7 @@ button.sftp-item-main {
 .host-list-title {
   margin: 0;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-title);
 }
 
@@ -2292,8 +2525,8 @@ button.sftp-item-main {
   height: var(--app-bottom-bar-height);
   margin-top: 8px;
   padding: 0 12px;
-  border-top: 1px solid var(--border-default);
-  background: var(--bg-panel);
+  border-top: 1px solid var(--glass-border);
+  background: transparent;
   box-sizing: border-box;
 }
 
@@ -2326,7 +2559,6 @@ button.sftp-item-main {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  background: var(--bg-panel);
 }
 
 .host-picker-header {
@@ -2335,9 +2567,9 @@ button.sftp-item-main {
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
-  background: var(--bg-card);
+  background: transparent;
 }
 
 .host-picker-header .modal-title {
@@ -2365,7 +2597,7 @@ button.sftp-item-main {
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   background: var(--bg-card);
   padding: 14px 16px;
 }
@@ -2373,7 +2605,7 @@ button.sftp-item-main {
 .host-item {
   background: var(--bg-terminal);
   border: 1px solid var(--border-default);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   padding: 14px 16px;
   margin-bottom: 10px;
   transition:
@@ -2406,7 +2638,7 @@ button.sftp-item-main {
   align-items: center;
   justify-content: center;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-on-accent);
   background: linear-gradient(160deg, var(--host-avatar-start) 0%, var(--host-avatar-end) 100%);
   border: 1px solid var(--host-avatar-border);
@@ -2421,7 +2653,7 @@ button.sftp-item-main {
 }
 
 .host-item-name {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 15px;
   color: var(--text-heading);
   line-height: 1.3;
@@ -2447,6 +2679,7 @@ button.sftp-item-main {
 
 .host-item-label {
   color: var(--text-muted);
+  font-weight: 700;
 }
 
 .host-item-value {
@@ -2494,7 +2727,7 @@ button.sftp-item-main {
 .host-form-title {
   margin: 0 0 12px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .host-form {
@@ -2511,20 +2744,21 @@ button.sftp-item-main {
 
 .form-field > span {
   font-size: 12px;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
 .form-field input,
 .form-field select {
   background: var(--bg-input);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control);
   color: var(--text-primary);
-  padding: 7px 10px;
+  padding: 8px 12px;
   transition:
-    border-color 120ms ease,
-    background-color 120ms ease,
-    box-shadow 120ms ease;
+    border-color var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy);
 }
 
 .form-field input:hover:not(:disabled) {
@@ -2575,15 +2809,17 @@ button.sftp-item-main {
   margin: 0;
   padding: 7px 10px;
   background: var(--bg-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-button);
   color: var(--text-bright);
   text-align: left;
+  font-weight: 400;
   cursor: pointer;
   transition:
-    border-color 120ms ease,
-    background-color 120ms ease,
-    box-shadow 120ms ease;
+    border-color var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy),
+    transform var(--dur-fast) var(--ease-snappy);
 }
 
 .app-select-trigger > span,
@@ -2635,10 +2871,12 @@ button.sftp-item-main {
 .app-select-content {
   z-index: 1300;
   overflow: hidden;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   width: var(--radix-select-trigger-width);
   max-height: min(280px, var(--radix-select-content-available-height));
 }
@@ -2669,6 +2907,7 @@ button.sftp-item-main {
   border-radius: 4px;
   color: var(--text-title);
   font-size: 13px;
+  font-weight: 400;
   line-height: 1.35;
   cursor: pointer;
   outline: none;
@@ -2738,14 +2977,23 @@ button.sftp-item-main {
 button {
   cursor: pointer;
   border: 1px solid var(--btn-secondary-border);
-  border-radius: 3px;
-  padding: 6px 12px;
+  border-radius: var(--radius-button);
+  padding: 7px 14px;
   background: var(--btn-secondary-bg);
   color: var(--btn-secondary-text);
+  font-weight: 700;
+  transition:
+    transform var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy);
 }
 
 button:hover:not(:disabled) {
   background: var(--btn-secondary-bg-hover);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 button:disabled {
@@ -2787,8 +3035,18 @@ button:disabled {
 }
 
 .btn-sm {
-  padding: 4px 8px;
+  padding: 5px 10px;
   font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+
+  button:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 /* Toast */
@@ -2837,7 +3095,8 @@ button:disabled {
   background: transparent;
 }
 
-.terminal-context-menu {
+.terminal-context-menu,
+.sftp-context-menu {
   position: fixed;
   z-index: 1000;
   min-width: 160px;
@@ -2850,7 +3109,8 @@ button:disabled {
   flex-direction: column;
 }
 
-.terminal-context-menu-item {
+.terminal-context-menu-item,
+.sftp-context-menu-item {
   display: block;
   width: 100%;
   padding: 6px 12px;
@@ -2859,22 +3119,35 @@ button:disabled {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
+  font-weight: 700;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-button);
 }
 
-.terminal-context-menu-item:hover:not(:disabled) {
+.terminal-context-menu-item:hover:not(:disabled),
+.sftp-context-menu-item:hover:not(:disabled) {
   background: var(--accent-primary);
   color: var(--text-on-accent);
 }
 
-.terminal-context-menu-item:disabled {
+.terminal-context-menu-item:disabled,
+.sftp-context-menu-item:disabled {
   color: var(--text-muted);
   cursor: default;
 }
 
-.terminal-context-menu-separator {
+.terminal-context-menu-separator,
+.sftp-context-menu-separator {
   height: 1px;
   margin: 4px 8px;
   background: var(--border-subtle);
+}
+
+.sftp-context-menu-item.is-danger {
+  color: var(--text-error);
+}
+
+.sftp-context-menu-item.is-danger:hover:not(:disabled) {
+  background: var(--status-error);
+  color: var(--text-on-accent);
 }

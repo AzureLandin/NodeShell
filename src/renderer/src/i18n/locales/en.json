@@ -38,7 +38,8 @@
     "disconnected": "Session disconnected",
     "error": "Connection error",
     "reconnect": "Reconnect",
-    "placeholder": "Click Hosts in the top-left to connect"
+    "placeholder": "Click Hosts in the top-left to connect",
+    "newTab": "New session"
   },
   "terminal": {
     "copy": "Copy",
@@ -152,12 +153,14 @@
   },
   "sidebar": {
     "placeholderTitle": "Monitor",
-    "placeholderBody": "System monitoring will appear here later."
+    "placeholderBody": "System monitoring will appear here later.",
+    "railLabel": "App"
   },
   "agent": {
     "title": "Agent",
     "hide": "Hide Agent",
     "show": "Show Agent",
+    "menu": "Agent menu",
     "needSession": "Connect a session to use the agent.",
     "notConfigured": "Add an API key in Settings to use the agent.",
     "empty": "Ask about this host. The agent runs commands and reads files over the current SSH session.",
@@ -193,6 +196,8 @@
   },
   "monitor": {
     "title": "Monitor",
+    "hide": "Hide monitor",
+    "show": "Show monitor",
     "needSession": "Connect a session to view remote CPU, memory, and network.",
     "unavailable": "Monitoring unavailable (Linux /proc required).",
     "sampling": "Sampling…",

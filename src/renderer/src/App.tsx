@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { HostConfig, LanguageCode, PermissionAskEvent, PermissionDecision, PermissionPolicy, ThemePreference } from '../../shared/types'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faChartLine, faGear } from '@fortawesome/free-solid-svg-icons'
 import { AgentPanel } from './components/AgentPanel'
 import { ConfirmModal } from './components/ConfirmModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -177,6 +179,7 @@ function App(): React.JSX.Element {
   const [permissionPolicy, setPermissionPolicy] = useState<PermissionPolicy>('ask')
   const [permissionQueue, setPermissionQueue] = useState<PermissionAskEvent[]>([])
   const [sftpExpanded, setSftpExpanded] = useState(false)
+  const [monitorOpen, setMonitorOpen] = useState(true)
   const [agentOpen, setAgentOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hostsOpen, setHostsOpen] = useState(false)
@@ -650,15 +653,41 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <ErrorBoundary>
-          <SidebarPanel
-            activeSessionId={activeSessionId}
-            activeSessionTitle={activeSessionTitle}
-            connected={activeConnected}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
-        </ErrorBoundary>
+      <nav className="icon-rail glass" aria-label={t('sidebar.railLabel')}>
+        <button
+          type="button"
+          className="icon-rail-btn"
+          aria-pressed={monitorOpen}
+          aria-label={monitorOpen ? t('monitor.hide') : t('monitor.show')}
+          title={monitorOpen ? t('monitor.hide') : t('monitor.show')}
+          onClick={() => setMonitorOpen((v) => !v)}
+        >
+          <FontAwesomeIcon icon={faChartLine} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="icon-rail-btn"
+          aria-label={t('settings.open')}
+          title={t('settings.open')}
+          onClick={() => setSettingsOpen(true)}
+        >
+          <FontAwesomeIcon icon={faGear} aria-hidden />
+        </button>
+      </nav>
+      <aside
+        className={`sidebar glass${monitorOpen ? '' : ' is-collapsed'}`}
+        aria-hidden={!monitorOpen}
+        inert={!monitorOpen ? true : undefined}
+      >
+        <div className="sidebar-inner">
+          <ErrorBoundary>
+            <SidebarPanel
+              activeSessionId={activeSessionId}
+              activeSessionTitle={activeSessionTitle}
+              connected={activeConnected}
+            />
+          </ErrorBoundary>
+        </div>
       </aside>
       <main className="main main-with-sessions">
         <ErrorBoundary>
@@ -685,7 +714,7 @@ function App(): React.JSX.Element {
       {/* Stay mounted when collapsed so the transcript and event listeners
           survive; width animates to 0 and inert keeps it out of the tab order. */}
       <aside
-        className={`agent-dock${agentOpen ? '' : ' is-collapsed'}`}
+        className={`agent-dock glass${agentOpen ? '' : ' is-collapsed'}`}
         aria-hidden={!agentOpen}
         inert={!agentOpen ? true : undefined}
       >

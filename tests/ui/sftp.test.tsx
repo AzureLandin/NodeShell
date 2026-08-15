@@ -213,3 +213,53 @@ describe('SftpPanel file drops (Wails native path)', () => {
     expect(progressOff).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('SftpPanel context menu', () => {
+  function row(name: string): HTMLElement {
+    const el = screen.getByText(name).closest('li')
+    if (!el) throw new Error(`row for "${name}" not found`)
+    return el
+  }
+
+  it('opens file actions on right-click and has no inline action buttons', async () => {
+    const { fake } = await renderExpandedPanel()
+    fake.mocks.sftp.download.mockResolvedValue(undefined)
+
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+
+    fireEvent.contextMenu(row('readme.md'))
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Download' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }))
+    await waitFor(() =>
+      expect(fake.mocks.sftp.download).toHaveBeenCalledWith('s1', 'readme.md', 'readme.md')
+    )
+  })
+
+  it('omits Edit and Download for directories', async () => {
+    await renderExpandedPanel()
+
+    fireEvent.contextMenu(row('docs'))
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Download' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('closes on an outside mousedown', async () => {
+    await renderExpandedPanel()
+
+    fireEvent.contextMenu(row('readme.md'))
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    expect(document.body.querySelector('[data-testid="sftp-context-menu"]')).not.toBeNull()
+    expect(document.querySelector('.sftp-panel [data-testid="sftp-context-menu"]')).toBeNull()
+
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+})

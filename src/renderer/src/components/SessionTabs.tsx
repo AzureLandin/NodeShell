@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faServer, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faServer, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import type { ResolvedTheme } from '../../../shared/types'
 import type { UiSession } from '../hooks/useSessions'
 import { SftpPanel } from './SftpPanel'
@@ -65,7 +65,7 @@ export function SessionTabs({
 
   return (
     <div className="session-tabs">
-      <div className="session-tab-bar" role="tablist">
+      <div className="session-tab-bar glass" role="tablist">
         <button
           type="button"
           className="hosts-launcher"
@@ -106,6 +106,16 @@ export function SessionTabs({
             </button>
           </div>
         ))}
+
+        <button
+          type="button"
+          className="session-tab-add"
+          aria-label={t('session.newTab')}
+          title={t('session.newTab')}
+          onClick={onOpenHosts}
+        >
+          <FontAwesomeIcon icon={faPlus} aria-hidden />
+        </button>
 
         <div className="session-tab-bar-actions">
           <button

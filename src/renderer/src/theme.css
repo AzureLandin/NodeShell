@@ -1,5 +1,19 @@
 /* Semantic theme tokens — components should use var(--…) only. */
 
+:root {
+  --radius-control: 8px;
+  --radius-button: 14px;
+  --radius-card: 10px;
+  --radius-sheet: 12px;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 180ms;
+  --dur-med: 320ms;
+  --glass-blur: 28px;
+  --glass-saturate: 160%;
+  --chrome-gap: 8px;
+}
+
 [data-theme='dark'] {
   --bg-app: #121212;
   --bg-panel: #1a1a1a;
@@ -10,7 +24,10 @@
   --bg-input-focus: #1f1f1f;
   --bg-hover: #2a2a2a;
   --bg-hover-strong: #3a3a3a;
-  --bg-overlay: rgba(0, 0, 0, 0.55);
+  --bg-overlay: rgba(0, 0, 0, 0.32);
+  --glass-bg: rgba(28, 28, 30, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --bg-danger: #4a2d2d;
   --bg-warn-banner: #2a2220;
 
@@ -100,7 +117,10 @@
   --bg-input-focus: #ffffff;
   --bg-hover: #e9edf3;
   --bg-hover-strong: #dde3eb;
-  --bg-overlay: rgba(15, 20, 28, 0.42);
+  --bg-overlay: rgba(15, 20, 28, 0.28);
+  --glass-bg: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.55);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --bg-danger: #fef1f1;
   --bg-warn-banner: #fff7eb;
 

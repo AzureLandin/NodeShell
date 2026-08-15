@@ -6,7 +6,6 @@ interface SidebarPanelProps {
   activeSessionId: string | null
   activeSessionTitle: string | null
   connected: boolean
-  onOpenSettings: () => void
 }
 
 interface NetSample {
@@ -268,8 +267,12 @@ function MonitorPanel({
       )}
 
       <div className={`monitor-body${!snapshot ? ' monitor-body-idle' : ''}`}>
-        <p className="monitor-host" title={hostLabel === '—' ? undefined : hostLabel}>
-          {hostLabel}
+        <p className="monitor-host-chip" title={hostLabel === '—' ? undefined : hostLabel}>
+          <span
+            className={`session-status-dot ${connected ? 'session-status-connected' : 'session-status-disconnected'}`}
+            aria-hidden
+          />
+          <span className="monitor-host-chip-label">{hostLabel}</span>
         </p>
 
         <MetricBar
@@ -352,17 +355,14 @@ function MonitorPanel({
 }
 
 /**
- * Left sidebar: host monitor plus the settings footer. The agent lives in
- * the right-hand dock, so this panel no longer switches surfaces.
+ * Left sidebar: host monitor. Settings live on the icon rail; the agent lives
+ * in the right-hand dock.
  */
 export function SidebarPanel({
   activeSessionId,
   activeSessionTitle,
-  connected,
-  onOpenSettings
+  connected
 }: SidebarPanelProps): React.JSX.Element {
-  const { t } = useTranslation()
-
   return (
     <div className="sidebar-panel">
       <MonitorPanel
@@ -370,11 +370,6 @@ export function SidebarPanel({
         activeSessionTitle={activeSessionTitle}
         connected={connected}
       />
-      <div className="host-list-footer">
-        <button type="button" className="btn-secondary btn-settings" onClick={onOpenSettings}>
-          {t('settings.open')}
-        </button>
-      </div>
     </div>
   )
 }

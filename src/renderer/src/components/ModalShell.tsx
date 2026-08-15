@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const CLOSE_FALLBACK_MS = 400
 
@@ -130,7 +131,7 @@ export function ModalShell({
     requestClose()
   }
 
-  return (
+  return createPortal(
     <ModalCloseContext.Provider value={requestClose}>
       <div
         className={overlayClass}
@@ -149,6 +150,7 @@ export function ModalShell({
           {children}
         </div>
       </div>
-    </ModalCloseContext.Provider>
+    </ModalCloseContext.Provider>,
+    document.body
   )
 }

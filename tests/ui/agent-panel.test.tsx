@@ -16,8 +16,9 @@ function renderPanel(
     sessionId?: string | null
     connected?: boolean
     configured?: boolean
+    onHide?: ReturnType<typeof vi.fn>
   } = {}
-): { fake: FakeApi; onOpenSettings: ReturnType<typeof vi.fn> } {
+): { fake: FakeApi; onOpenSettings: ReturnType<typeof vi.fn>; onHide?: ReturnType<typeof vi.fn> } {
   const fake = installFakeApi()
   if (overrides.configured === false) {
     fake.mocks.agent.status.mockResolvedValue({
@@ -33,9 +34,10 @@ function renderPanel(
       activeSessionTitle="prod-web"
       connected={overrides.connected ?? true}
       onOpenSettings={onOpenSettings}
+      onHide={overrides.onHide}
     />
   )
-  return { fake, onOpenSettings }
+  return { fake, onOpenSettings, onHide: overrides.onHide }
 }
 
 async function composer(): Promise<HTMLTextAreaElement> {
@@ -183,7 +185,8 @@ describe('AgentPanel prompting', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText('hello')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    await user.click(screen.getByRole('button', { name: 'Agent menu' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Clear' }))
     expect(fake.mocks.agent.clear).toHaveBeenCalledWith('s1')
     await waitFor(() => expect(screen.queryByText('hello')).not.toBeInTheDocument())
 
@@ -218,6 +221,25 @@ describe('AgentPanel guards', () => {
     renderPanel({ sessionId: null })
     expect(await screen.findByText('Connect a session to use the agent.')).toBeInTheDocument()
     expect((await composer()).disabled).toBe(true)
+  })
+
+  it('shows empty copy when the transcript is idle', async () => {
+    renderPanel()
+    expect(
+      await screen.findByText(
+        'Ask about this host. The agent runs commands and reads files over the current SSH session.'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('hides from the overflow menu when onHide is provided', async () => {
+    const onHide = vi.fn()
+    renderPanel({ onHide })
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: 'Agent menu' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Hide Agent' }))
+    expect(onHide).toHaveBeenCalledTimes(1)
   })
 
   it('points at settings when no API key is stored and opens settings from the notice', async () => {
