@@ -107,11 +107,27 @@ describe('api adapter shape', () => {
     expect(typeof api.monitor.setActive).toBe('function')
     expect(typeof api.monitor.onUpdate).toBe('function')
 
+    expect(typeof api.agent!.status).toBe('function')
+    expect(typeof api.agent!.setConfig).toBe('function')
+    expect(typeof api.agent!.prompt).toBe('function')
+    expect(typeof api.agent!.abort).toBe('function')
+    expect(typeof api.agent!.clear).toBe('function')
+    expect(typeof api.agent!.onDelta).toBe('function')
+    expect(typeof api.agent!.onTool).toBe('function')
+    expect(typeof api.agent!.onDone).toBe('function')
+    expect(typeof api.agent!.onError).toBe('function')
+
+    expect(typeof api.permission.decide).toBe('function')
+    expect(typeof api.permission.onAsk).toBe('function')
+    expect(typeof api.permission.onClosed).toBe('function')
+
     expect(typeof api.fonts.list).toBe('function')
     expect(typeof api.app.getVersion).toBe('function')
+    expect(typeof api.app.openExternal).toBe('function')
     expect(typeof api.mcpRegistration.status).toBe('function')
     expect(typeof api.mcpRegistration.register).toBe('function')
     expect(typeof api.mcpRegistration.clipboardSnippet).toBe('function')
+    expect(typeof api.mcpRegistration.manualConfig).toBe('function')
     expect(typeof api.dialog.openPrivateKeyFile).toBe('function')
   })
 })
@@ -225,6 +241,29 @@ describe('api adapter binding dispatch', () => {
     await api.monitor.setActive('s1', 't')
     expect(bridge.calls.at(-1)).toEqual({ method: 'MonitorSetActive', args: ['s1', 't'] })
 
+    const agentStatus = { configured: true, baseUrl: 'https://x.test/v1', model: 'm' }
+    bridge.setResult(agentStatus)
+    await expect(api.agent!.status()).resolves.toEqual(agentStatus)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentStatus', args: [] })
+    await expect(api.agent!.setConfig({ model: 'm', apiKey: 'k' })).resolves.toEqual(agentStatus)
+    expect(bridge.calls.at(-1)).toEqual({
+      method: 'AgentSetConfig',
+      args: [{ model: 'm', apiKey: 'k' }]
+    })
+    bridge.setResult(undefined)
+    await api.agent!.prompt('s1', 'prod-web', 'hello')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentPrompt', args: ['s1', 'prod-web', 'hello'] })
+    await api.agent!.abort('s1')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentAbort', args: ['s1'] })
+    await api.agent!.clear('s1')
+    expect(bridge.calls.at(-1)).toEqual({ method: 'AgentClear', args: ['s1'] })
+
+    await api.permission.decide('ask-1', 'allow-session')
+    expect(bridge.calls.at(-1)).toEqual({
+      method: 'PermissionDecide',
+      args: ['ask-1', 'allow-session']
+    })
+
     bridge.setResult(['mono'])
     await expect(api.fonts.list()).resolves.toEqual(['mono'])
     expect(bridge.calls.at(-1)).toEqual({ method: 'FontsList', args: [] })
@@ -232,6 +271,12 @@ describe('api adapter binding dispatch', () => {
     bridge.setResult('2.0.0')
     await expect(api.app.getVersion()).resolves.toBe('2.0.0')
     expect(bridge.calls.at(-1)).toEqual({ method: 'AppGetVersion', args: [] })
+    bridge.setResult(undefined)
+    await api.app.openExternal!('https://example.com')
+    expect(bridge.calls.at(-1)).toEqual({
+      method: 'AppOpenExternal',
+      args: ['https://example.com']
+    })
 
     const statuses: never[] = []
     bridge.setResult(statuses)
@@ -242,6 +287,14 @@ describe('api adapter binding dispatch', () => {
     bridge.setResult('snippet')
     await expect(api.mcpRegistration.clipboardSnippet()).resolves.toBe('snippet')
     expect(bridge.calls.at(-1)).toEqual({ method: 'McpRegistrationClipboardSnippet', args: [] })
+    const kit = {
+      command: '/x/nodeshell',
+      args: ['--mcp'],
+      snippets: { standard: 's', vscode: 'v', opencode: 'o', codex: 'c' }
+    }
+    bridge.setResult(kit)
+    await expect(api.mcpRegistration.manualConfig()).resolves.toEqual(kit)
+    expect(bridge.calls.at(-1)).toEqual({ method: 'McpRegistrationManualConfig', args: [] })
 
     bridge.setResult('/key')
     await expect(api.dialog.openPrivateKeyFile()).resolves.toBe('/key')
@@ -343,6 +396,70 @@ describe('api adapter event mapping', () => {
       done: false
     })
     expect(update).toHaveBeenCalledWith({ sessionId: 's1', snapshot: null })
+  })
+
+  it('maps the four agent events onto their runtime channels', () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    const delta = vi.fn()
+    const tool = vi.fn()
+    const done = vi.fn()
+    const failed = vi.fn()
+
+    api.agent!.onDelta(delta)
+    api.agent!.onTool(tool)
+    api.agent!.onDone(done)
+    api.agent!.onError(failed)
+
+    bridge.emit('agent:delta', { sessionId: 's1', delta: 'hi' })
+    bridge.emit('agent:tool', {
+      sessionId: 's1',
+      callId: 'c1',
+      name: 'bash',
+      summary: 'df -h',
+      ok: true
+    })
+    bridge.emit('agent:done', { sessionId: 's1', aborted: false })
+    bridge.emit('agent:error', {
+      sessionId: 's1',
+      error: { code: 'UNKNOWN', message: 'boom' }
+    })
+
+    expect(delta).toHaveBeenCalledWith({ sessionId: 's1', delta: 'hi' })
+    expect(tool).toHaveBeenCalledWith({
+      sessionId: 's1',
+      callId: 'c1',
+      name: 'bash',
+      summary: 'df -h',
+      ok: true
+    })
+    expect(done).toHaveBeenCalledWith({ sessionId: 's1', aborted: false })
+    expect(failed).toHaveBeenCalledWith({
+      sessionId: 's1',
+      error: { code: 'UNKNOWN', message: 'boom' }
+    })
+  })
+
+  it('maps permission ask/closed onto their runtime channels', () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    const asked = vi.fn()
+    const closed = vi.fn()
+    api.permission.onAsk(asked)
+    api.permission.onClosed(closed)
+
+    const payload = {
+      id: 'ask-1',
+      source: 'agent',
+      tool: 'bash',
+      sessionId: 's1',
+      title: 'prod-web',
+      summary: 'uptime'
+    }
+    bridge.emit('permission:ask', payload)
+    bridge.emit('permission:closed', { id: 'ask-1' })
+    expect(asked).toHaveBeenCalledWith(payload)
+    expect(closed).toHaveBeenCalledWith({ id: 'ask-1' })
   })
 
   it('returns idempotent unsubscribe; callbacks stop after unsubscribe', () => {

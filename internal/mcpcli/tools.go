@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"nodeshell/internal/apperror"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/sftpservice"
 )
@@ -193,6 +194,9 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
+		if err := r.authorize(ctx, name, sessionID, permission.Truncate(command), ""); err != nil {
+			return nil, err
+		}
 		return r.RunCommand(ctx, sessionID, command, timeoutMs)
 	case "sftp_list":
 		sessionID, err := argString(args, "sessionId")
@@ -227,6 +231,10 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
+		detail := fmt.Sprintf("%d bytes", len(content))
+		if err := r.authorize(ctx, name, sessionID, remotePath, detail); err != nil {
+			return nil, err
+		}
 		return r.SftpWrite(ctx, sessionID, remotePath, content)
 	case "sftp_upload":
 		sessionID, err := argString(args, "sessionId")
@@ -241,6 +249,9 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
+		if err := r.authorize(ctx, name, sessionID, localPath, remoteName); err != nil {
+			return nil, err
+		}
 		return r.SftpUpload(ctx, sessionID, localPath, remoteName)
 	case "sftp_download":
 		sessionID, err := argString(args, "sessionId")
@@ -254,6 +265,9 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (a
 		localPath, err := argString(args, "localPath")
 		if err != nil {
 			return nil, toolArgError(name, err)
+		}
+		if err := r.authorize(ctx, name, sessionID, remotePath, localPath); err != nil {
+			return nil, err
 		}
 		return r.SftpDownload(ctx, sessionID, remotePath, localPath)
 	default:

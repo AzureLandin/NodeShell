@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { HostConfig, LanguageCode, ThemePreference } from '../../shared/types'
+import type { HostConfig, LanguageCode, PermissionAskEvent, PermissionDecision, PermissionPolicy, ThemePreference } from '../../shared/types'
+import { AgentPanel } from './components/AgentPanel'
 import { ConfirmModal } from './components/ConfirmModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import type { HostFormSubmit } from './components/HostForm'
 import { HostPickerModal } from './components/HostPickerModal'
 import { ModalShell, useModalClose } from './components/ModalShell'
 import { PasswordField } from './components/PasswordField'
+import { PermissionModal } from './components/PermissionModal'
 import { SessionTabs } from './components/SessionTabs'
 import { SettingsModal } from './components/SettingsModal'
 import { SidebarPanel } from './components/SidebarPanel'
@@ -172,7 +174,10 @@ function App(): React.JSX.Element {
   const [terminalFontSize, setTerminalFontSize] = useState(14)
   const [mcpIdleTimeoutMinutes, setMcpIdleTimeoutMinutes] = useState(10)
   const [mcpMaxSessions, setMcpMaxSessions] = useState(8)
+  const [permissionPolicy, setPermissionPolicy] = useState<PermissionPolicy>('ask')
+  const [permissionQueue, setPermissionQueue] = useState<PermissionAskEvent[]>([])
   const [sftpExpanded, setSftpExpanded] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hostsOpen, setHostsOpen] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
@@ -205,6 +210,7 @@ function App(): React.JSX.Element {
         fontSizePersistBaselineRef.current = settings.terminalFontSize
         setMcpIdleTimeoutMinutes(settings.mcpIdleTimeoutMinutes)
         setMcpMaxSessions(settings.mcpMaxSessions)
+        setPermissionPolicy(settings.permissionPolicy ?? 'ask')
         await i18n.changeLanguage(settings.language)
       } catch {
         setLanguage('zh')
@@ -214,6 +220,7 @@ function App(): React.JSX.Element {
         fontSizePersistBaselineRef.current = 14
         setMcpIdleTimeoutMinutes(10)
         setMcpMaxSessions(8)
+        setPermissionPolicy('ask')
         await i18n.changeLanguage('zh')
       }
     })()
@@ -221,6 +228,19 @@ function App(): React.JSX.Element {
       if (fontSizePersistTimerRef.current != null) {
         window.clearTimeout(fontSizePersistTimerRef.current)
       }
+    }
+  }, [])
+
+  useEffect(() => {
+    const offAsk = window.api.permission.onAsk((event) => {
+      setPermissionQueue((q) => (q.some((r) => r.id === event.id) ? q : [...q, event]))
+    })
+    const offClosed = window.api.permission.onClosed((event) => {
+      setPermissionQueue((q) => q.filter((r) => r.id !== event.id))
+    })
+    return () => {
+      offAsk()
+      offClosed()
     }
   }, [])
 
@@ -347,6 +367,25 @@ function App(): React.JSX.Element {
       setMcpMaxSessions(previous)
       setToast(t('auth.connectionFailed'))
     }
+  }
+
+  const handlePermissionPolicyChange = async (next: PermissionPolicy): Promise<void> => {
+    const previous = permissionPolicy
+    setPermissionPolicy(next)
+    try {
+      const saved = await window.api.settings.set({ permissionPolicy: next })
+      setPermissionPolicy(saved.permissionPolicy ?? next)
+    } catch {
+      setPermissionPolicy(previous)
+      setToast(t('auth.connectionFailed'))
+    }
+  }
+
+  const handlePermissionDecide = (decision: PermissionDecision): void => {
+    const current = permissionQueue[0]
+    if (!current) return
+    setPermissionQueue((q) => q.filter((r) => r.id !== current.id))
+    void window.api.permission.decide(current.id, decision)
   }
 
   const maybePromptSaveCredentials = async (
@@ -605,18 +644,18 @@ function App(): React.JSX.Element {
       ? localizeConnectError(hostsError, 'auth.connectionFailed')
       : null
 
+  const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
+  const activeSessionTitle = activeSession?.title ?? null
+  const activeConnected = activeSession?.status === 'connected'
+
   return (
     <div className="app">
       <aside className="sidebar">
         <ErrorBoundary>
           <SidebarPanel
             activeSessionId={activeSessionId}
-            activeSessionTitle={
-              sessions.find((s) => s.sessionId === activeSessionId)?.title ?? null
-            }
-            connected={
-              sessions.find((s) => s.sessionId === activeSessionId)?.status === 'connected'
-            }
+            activeSessionTitle={activeSessionTitle}
+            connected={activeConnected}
             onOpenSettings={() => setSettingsOpen(true)}
           />
         </ErrorBoundary>
@@ -633,6 +672,8 @@ function App(): React.JSX.Element {
             registerDataListener={registerDataListener}
             sftpExpanded={sftpExpanded}
             onToggleSftp={() => setSftpExpanded((v) => !v)}
+            agentOpen={agentOpen}
+            onToggleAgent={() => setAgentOpen((v) => !v)}
             onOpenHosts={() => setHostsOpen(true)}
             terminalFontFamily={terminalFontFamily}
             terminalFontSize={terminalFontSize}
@@ -641,6 +682,25 @@ function App(): React.JSX.Element {
           />
         </ErrorBoundary>
       </main>
+      {/* Stay mounted when collapsed so the transcript and event listeners
+          survive; width animates to 0 and inert keeps it out of the tab order. */}
+      <aside
+        className={`agent-dock${agentOpen ? '' : ' is-collapsed'}`}
+        aria-hidden={!agentOpen}
+        inert={!agentOpen ? true : undefined}
+      >
+        <div className="agent-dock-inner">
+          <ErrorBoundary>
+            <AgentPanel
+              activeSessionId={activeSessionId}
+              activeSessionTitle={activeSessionTitle}
+              connected={activeConnected}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onHide={() => setAgentOpen(false)}
+            />
+          </ErrorBoundary>
+        </div>
+      </aside>
       {hostsOpen && (
         <HostPickerModal
           hosts={hosts}
@@ -664,12 +724,14 @@ function App(): React.JSX.Element {
           terminalFontSize={terminalFontSize}
           mcpIdleTimeoutMinutes={mcpIdleTimeoutMinutes}
           mcpMaxSessions={mcpMaxSessions}
+          permissionPolicy={permissionPolicy}
           onLanguageChange={(lang) => void handleLanguageChange(lang)}
           onThemePreferenceChange={(theme) => void handleThemePreferenceChange(theme)}
           onTerminalFontFamilyChange={(family) => void handleTerminalFontFamilyChange(family)}
           onTerminalFontSizeChange={(size) => void handleTerminalFontSizeChange(size)}
           onMcpIdleTimeoutMinutesChange={(minutes) => void handleMcpIdleTimeoutMinutesChange(minutes)}
           onMcpMaxSessionsChange={(max) => void handleMcpMaxSessionsChange(max)}
+          onPermissionPolicyChange={(policy) => void handlePermissionPolicyChange(policy)}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -705,6 +767,9 @@ function App(): React.JSX.Element {
             resolve(false)
           }}
         />
+      )}
+      {permissionQueue[0] && (
+        <PermissionModal request={permissionQueue[0]} onDecide={handlePermissionDecide} />
       )}
       <Toast message={toastMessage} onClose={() => setToast(null)} />
     </div>

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nodeshell/internal/apperror"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/sftpservice"
 )
@@ -497,5 +498,39 @@ func TestCallRunCommandTimeoutStrict(t *testing.T) {
 	_, _, timeouts := m.snapshot()
 	if len(timeouts) == 0 || timeouts[0] != DefaultCommandTimeoutMs*time.Millisecond {
 		t.Fatalf("default exec timeouts = %v, want first = 60s", timeouts)
+	}
+}
+
+// TestCallSensitiveToolsHonourPermissionGate: a denied ask must not exec or
+// write, while list/read still run. Nil Auth (the other tests) remains allow.
+func TestCallSensitiveToolsHonourPermissionGate(t *testing.T) {
+	m := newFakeManager()
+	m.execOut = "should-not-run"
+	sf := &fakeSFTP{cwd: "/home", writeResolved: "/tmp/x"}
+	auth := permission.NewService(permission.ServiceDeps{Gate: permission.DenyGate{}})
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: sf,
+		MaxSessions: 2, IdleTimeout: time.Minute, Auth: auth,
+	})
+	sid := connectOK(t, rt, "h1")
+
+	_, err := rt.Call(context.Background(), "run_command", map[string]any{
+		"sessionId": sid, "command": "id",
+	})
+	assertErrorCode(t, err, apperror.PermissionDenied)
+	if _, _, timeouts := m.snapshot(); len(timeouts) != 0 {
+		t.Fatalf("run_command ran despite deny: timeouts=%v", timeouts)
+	}
+
+	_, err = rt.Call(context.Background(), "sftp_write", map[string]any{
+		"sessionId": sid, "path": "/tmp/x", "content": "SECRET",
+	})
+	assertErrorCode(t, err, apperror.PermissionDenied)
+	if _, writes, _, _, _ := sf.snapshot(); len(writes) != 0 {
+		t.Fatalf("sftp_write ran despite deny: %+v", writes)
+	}
+
+	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{"sessionId": sid}); err != nil {
+		t.Fatalf("sftp_list under deny gate: %v", err)
 	}
 }

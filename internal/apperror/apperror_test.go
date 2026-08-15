@@ -75,6 +75,13 @@ func TestFormatAllowsReservedCode(t *testing.T) {
 	}
 }
 
+func TestFormatPermissionDenied(t *testing.T) {
+	err := fakeCoded{code: apperror.PermissionDenied, message: "Permission denied"}
+	if got, want := apperror.Format(err), "NODESHELL_ERR:PERMISSION_DENIED:Permission denied"; got != want {
+		t.Fatalf("Format(%v) = %q, want %q", err, got, want)
+	}
+}
+
 // TestFormatUnwrapsCodedError ensures wrapping with %w keeps the code: the
 // formatter must look through fmt.Errorf chains via errors.As.
 func TestFormatUnwrapsCodedError(t *testing.T) {

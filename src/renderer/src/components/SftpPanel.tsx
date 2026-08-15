@@ -57,6 +57,7 @@ export function SftpPanel({
 }: SftpPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [cwd, setCwd] = useState('/')
+  const [pathDraft, setPathDraft] = useState('/')
   const [entries, setEntries] = useState<SftpEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,6 +76,7 @@ export function SftpPanel({
     if (!sessionId || !connected) {
       setEntries([])
       setCwd('/')
+      setPathDraft('/')
       setSelectedPath(null)
       loadedForSessionRef.current = null
       return
@@ -90,6 +92,7 @@ export function SftpPanel({
       ])
       if (gen !== requestGenRef.current) return
       setCwd(path)
+      setPathDraft(path)
       setEntries(list)
       loadedForSessionRef.current = forSession
     } catch (e) {
@@ -106,6 +109,7 @@ export function SftpPanel({
       if (loadedForSessionRef.current !== null) {
         setEntries([])
         setCwd('/')
+        setPathDraft('/')
         setError(null)
         setSelectedPath(null)
         setTransfer(null)
@@ -182,14 +186,25 @@ export function SftpPanel({
       const list = await window.api.sftp.list(forSession)
       if (gen !== requestGenRef.current) return
       setCwd(path)
+      setPathDraft(path)
       setEntries(list)
       loadedForSessionRef.current = forSession
     } catch (e) {
       if (gen !== requestGenRef.current) return
       setError(e instanceof Error ? e.message : t('sftp.error'))
+      setPathDraft(cwd)
     } finally {
       if (gen === requestGenRef.current) setLoading(false)
     }
+  }
+
+  const commitPath = async (): Promise<void> => {
+    const next = pathDraft.trim()
+    if (!next || next === cwd) {
+      setPathDraft(cwd)
+      return
+    }
+    await openDir(next)
   }
 
   const handleMkdir = async (): Promise<void> => {
@@ -346,11 +361,6 @@ export function SftpPanel({
         {connected && (
           <span className="sftp-status-dot" title={t('sftp.connected')} aria-hidden />
         )}
-        {connected && (
-          <span className="sftp-cwd" title={cwd}>
-            {cwd}
-          </span>
-        )}
         {transfer && !transfer.done && (
           <span className="sftp-transfer-badge" title={transfer.name}>
             {transfer.direction === 'down' ? t('sftp.downloading') : t('sftp.uploading')}
@@ -384,6 +394,27 @@ export function SftpPanel({
             </div>
           ) : (
             <>
+              <div className="sftp-path-bar">
+                <input
+                  type="text"
+                  className="sftp-path-input"
+                  value={pathDraft}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-label={t('sftp.path')}
+                  onChange={(e) => setPathDraft(e.target.value)}
+                  onBlur={() => void commitPath()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void commitPath()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setPathDraft(cwd)
+                    }
+                  }}
+                />
+              </div>
               <div className="sftp-toolbar">
                 <div className="sftp-toolbar-group">
                   <button

@@ -16,6 +16,20 @@ export interface AppSettings {
   mcpMaxSessions: number
   /** UI + terminal theme preference (default system). */
   themePreference: ThemePreference
+  /**
+   * OpenAI-compatible base URL for the sidebar agent, including the
+   * provider's version prefix (e.g. https://api.openai.com/v1). The agent's
+   * API key is not part of the settings file; it lives in the OS keyring and
+   * is written through api.agent.setConfig.
+   */
+  agentBaseUrl?: string
+  /** Model id the sidebar agent requests. */
+  agentModel?: string
+  /**
+   * How sensitive agent/MCP tools (commands, writes, uploads, downloads)
+   * are authorised. Default `ask`.
+   */
+  permissionPolicy?: PermissionPolicy
 }
 
 export interface HostConfig {
@@ -46,6 +60,7 @@ export type SshErrorCode =
   | 'MCP_SESSION_LIMIT'
   | 'HOST_NOT_FOUND'
   | 'CANCELLED'
+  | 'PERMISSION_DENIED'
   | 'UNKNOWN'
 
 export interface AppError {
@@ -108,6 +123,69 @@ export interface SftpTransferProgressEvent {
   transferred: number
   total: number
   done: boolean
+}
+
+/** One streamed assistant text fragment. */
+export interface AgentDeltaEvent {
+  sessionId: string
+  delta: string
+}
+
+/** One finished agent tool call; `summary` is the command or remote path. */
+export interface AgentToolEvent {
+  sessionId: string
+  callId: string
+  name: string
+  summary: string
+  ok: boolean
+  detail?: string
+}
+
+/** Closes one agent run; exactly one arrives per accepted prompt. */
+export interface AgentDoneEvent {
+  sessionId: string
+  aborted: boolean
+}
+
+/** A failure after the prompt was accepted; always followed by done. */
+export interface AgentErrorEvent {
+  sessionId: string
+  error: AppError
+}
+
+export type PermissionPolicy = 'ask' | 'allow' | 'deny'
+
+export type PermissionDecision = 'deny' | 'allow' | 'allow-session'
+
+export type PermissionSource = 'agent' | 'mcp'
+
+/** One in-app permission prompt. Summary is a command or path, never file contents. */
+export interface PermissionAskEvent {
+  id: string
+  source: PermissionSource
+  tool: string
+  sessionId: string
+  title: string
+  summary: string
+  detail?: string
+}
+
+export interface PermissionClosedEvent {
+  id: string
+}
+
+/** Agent endpoint state; the API key is never returned, only whether one is stored. */
+export interface AgentConfigStatus {
+  configured: boolean
+  baseUrl: string
+  model: string
+}
+
+export interface AgentConfigPatch {
+  baseUrl?: string
+  model?: string
+  /** Stored in the OS keyring; an empty string clears it. */
+  apiKey?: string
 }
 
 export interface ElectronApi {
@@ -186,11 +264,42 @@ export interface ElectronApi {
     setActive: (sessionId: string | null, title?: string) => Promise<void>
     onUpdate: (cb: (event: MonitorUpdateEvent) => void) => () => void
   }
+  /**
+   * Sidebar assistant bound to one SSH session. Present only in the Wails
+   * adapter (the Electron preload predates it), so callers must tolerate it
+   * being absent.
+   */
+  agent?: {
+    status: () => Promise<AgentConfigStatus>
+    setConfig: (patch: AgentConfigPatch) => Promise<AgentConfigStatus>
+    /**
+     * Accept one message for the session. Rejects only on a pre-flight
+     * failure (not configured, empty prompt, a run already in flight);
+     * progress arrives through the events below.
+     */
+    prompt: (sessionId: string, title: string, text: string) => Promise<void>
+    abort: (sessionId: string) => Promise<void>
+    clear: (sessionId: string) => Promise<void>
+    onDelta: (cb: (event: AgentDeltaEvent) => void) => () => void
+    onTool: (cb: (event: AgentToolEvent) => void) => () => void
+    onDone: (cb: (event: AgentDoneEvent) => void) => () => void
+    onError: (cb: (event: AgentErrorEvent) => void) => () => void
+  }
+  permission: {
+    decide: (id: string, decision: PermissionDecision) => Promise<void>
+    onAsk: (cb: (event: PermissionAskEvent) => void) => () => void
+    onClosed: (cb: (event: PermissionClosedEvent) => void) => () => void
+  }
   fonts: {
     list: () => Promise<string[]>
   }
   app: {
     getVersion: () => Promise<string>
+    /**
+     * Open an http(s) URL in the system browser. Used by assistant markdown
+     * links so a click cannot navigate the WebView.
+     */
+    openExternal?: (url: string) => Promise<void>
   }
   mcpRegistration: {
     status: () => Promise<McpRegistrationTargetStatus[]>
@@ -198,6 +307,7 @@ export interface ElectronApi {
       target: McpRegistrationTarget | 'all'
     ) => Promise<McpRegistrationResult[]>
     clipboardSnippet: () => Promise<string>
+    manualConfig: () => Promise<McpManualConfig>
   }
   dialog: {
     openPrivateKeyFile: () => Promise<string | null>
@@ -205,6 +315,19 @@ export interface ElectronApi {
 }
 
 export type McpRegistrationTarget = 'cursor' | 'claudeCode' | 'codex' | 'opencode'
+
+export type McpSnippetFormat = 'standard' | 'vscode' | 'opencode' | 'codex'
+
+export interface McpManualConfig {
+  command: string
+  args: string[]
+  snippets: {
+    standard: string
+    vscode: string
+    opencode: string
+    codex: string
+  }
+}
 
 export interface McpRegistrationTargetStatus {
   id: McpRegistrationTarget
@@ -254,11 +377,25 @@ export const IPC = {
   sftpTransferProgress: 'sftp:transferProgress',
   monitorSetActive: 'monitor:setActive',
   monitorUpdate: 'monitor:update',
+  agentStatus: 'agent:status',
+  agentSetConfig: 'agent:setConfig',
+  agentPrompt: 'agent:prompt',
+  agentAbort: 'agent:abort',
+  agentClear: 'agent:clear',
+  agentDelta: 'agent:delta',
+  agentTool: 'agent:tool',
+  agentDone: 'agent:done',
+  agentError: 'agent:error',
+  permissionAsk: 'permission:ask',
+  permissionClosed: 'permission:closed',
+  permissionDecide: 'permission:decide',
   fontsList: 'fonts:list',
   appGetVersion: 'app:getVersion',
+  appOpenExternal: 'app:openExternal',
   mcpRegistrationStatus: 'mcpRegistration:status',
   mcpRegistrationRegister: 'mcpRegistration:register',
   mcpRegistrationClipboard: 'mcpRegistration:clipboardSnippet',
+  mcpRegistrationManualConfig: 'mcpRegistration:manualConfig',
   dialogOpenPrivateKey: 'dialog:openPrivateKey',
   dialogOpenUploadFiles: 'dialog:openUploadFiles',
   dialogSaveDownload: 'dialog:saveDownload',

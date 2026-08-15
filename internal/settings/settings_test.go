@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -14,7 +15,9 @@ const fullFixture = `{
   "terminalFontSize": 16,
   "mcpIdleTimeoutMinutes": 30,
   "mcpMaxSessions": 4,
-  "themePreference": "light"
+  "themePreference": "light",
+  "agentBaseUrl": "https://api.deepseek.com/v1",
+  "agentModel": "deepseek-chat"
 }`
 
 func newStore(t *testing.T) *Store {
@@ -42,7 +45,9 @@ func TestGetFromFullFixture(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	want := AppSettings{Language: "en", TerminalFontFamily: "Cascadia Code", TerminalFontSize: 16,
-		McpIdleTimeoutMinutes: 30, McpMaxSessions: 4, ThemePreference: "light"}
+		McpIdleTimeoutMinutes: 30, McpMaxSessions: 4, ThemePreference: "light",
+		AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
+		PermissionPolicy: Defaults.PermissionPolicy}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -58,7 +63,8 @@ func TestPartialFixtureFillsDefaults(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Language != "en" || got.TerminalFontFamily != "Hack" || got.TerminalFontSize != 14 ||
-		got.McpIdleTimeoutMinutes != 10 || got.McpMaxSessions != 8 || got.ThemePreference != "system" {
+		got.McpIdleTimeoutMinutes != 10 || got.McpMaxSessions != 8 || got.ThemePreference != "system" ||
+		got.PermissionPolicy != "ask" {
 		t.Fatalf("partial merge mismatch: %+v", got)
 	}
 }
@@ -103,7 +109,9 @@ func TestClampsValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := AppSettings{Language: "zh", TerminalFontFamily: "Hack", TerminalFontSize: 10,
-		McpIdleTimeoutMinutes: 1, McpMaxSessions: 32, ThemePreference: "system"}
+		McpIdleTimeoutMinutes: 1, McpMaxSessions: 32, ThemePreference: "system",
+		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
+		PermissionPolicy: Defaults.PermissionPolicy}
 	if got != want {
 		t.Fatalf("clamp mismatch: got %+v want %+v", got, want)
 	}
@@ -220,9 +228,95 @@ func TestWrongTypedStringFieldsNormalizeLikeTS(t *testing.T) {
 		t.Fatalf("Get with wrong-typed string fields: %v", err)
 	}
 	want := AppSettings{Language: "zh", TerminalFontFamily: "Hack", TerminalFontSize: 14,
-		McpIdleTimeoutMinutes: 10, McpMaxSessions: 8, ThemePreference: "system"}
+		McpIdleTimeoutMinutes: 10, McpMaxSessions: 8, ThemePreference: "system",
+		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
+		PermissionPolicy: Defaults.PermissionPolicy}
 	if got != want {
 		t.Fatalf("got %+v, want %+v (TS normalize* falls back to defaults)", got, want)
+	}
+}
+
+// The agent endpoint is only ever read back as an http(s) URL: a non-HTTP
+// scheme in the file must not be able to redirect the assistant, and a
+// blank/oversized model or URL falls back to the default.
+func TestAgentEndpointNormalisation(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		wantURL   string
+		wantModel string
+	}{
+		{"trailing slash trimmed", `{"agentBaseUrl": "https://x.test/v1/", "agentModel": " m "}`,
+			"https://x.test/v1", "m"},
+		{"non-http scheme rejected", `{"agentBaseUrl": "file:///etc/passwd"}`,
+			Defaults.AgentBaseURL, Defaults.AgentModel},
+		{"blank falls back", `{"agentBaseUrl": "  ", "agentModel": ""}`,
+			Defaults.AgentBaseURL, Defaults.AgentModel},
+		{"wrong type falls back", `{"agentBaseUrl": 7, "agentModel": true}`,
+			Defaults.AgentBaseURL, Defaults.AgentModel},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := New(dir).Get()
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.AgentBaseURL != tc.wantURL || got.AgentModel != tc.wantModel {
+				t.Fatalf("agent config = (%q, %q), want (%q, %q)",
+					got.AgentBaseURL, got.AgentModel, tc.wantURL, tc.wantModel)
+			}
+		})
+	}
+}
+
+// Long values are garbage rather than configuration: they must not be
+// persisted or sent to an endpoint.
+func TestAgentFieldsRejectOversizedValues(t *testing.T) {
+	long := "https://x.test/" + strings.Repeat("a", AgentFieldMaxLen)
+	got, err := newStore(t).Set(Patch{AgentBaseURL: &long, AgentModel: &long})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AgentBaseURL != Defaults.AgentBaseURL || got.AgentModel != Defaults.AgentModel {
+		t.Fatalf("oversized agent fields were kept: %+v", got)
+	}
+}
+
+func TestPermissionPolicyNormalisation(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{`{"permissionPolicy": "allow"}`, "allow"},
+		{`{"permissionPolicy": "DENY"}`, "deny"},
+		{`{"permissionPolicy": "ask"}`, "ask"},
+		{`{"permissionPolicy": "always"}`, "ask"},
+		{`{"permissionPolicy": 7}`, "ask"},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := New(dir).Get()
+		if err != nil {
+			t.Fatalf("Get(%s): %v", tc.raw, err)
+		}
+		if got.PermissionPolicy != tc.want {
+			t.Fatalf("permissionPolicy from %s = %q, want %q", tc.raw, got.PermissionPolicy, tc.want)
+		}
+	}
+	deny := "deny"
+	got, err := newStore(t).Set(Patch{PermissionPolicy: &deny})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.PermissionPolicy != "deny" {
+		t.Fatalf("Set permissionPolicy = %q", got.PermissionPolicy)
 	}
 }
 

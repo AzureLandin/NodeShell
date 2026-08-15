@@ -14,6 +14,7 @@ import (
 
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/hosts"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/sftpservice"
 	"nodeshell/internal/sshclient"
@@ -95,6 +96,8 @@ type Deps struct {
 	// NextSink receives forwarded session events after the runtime has
 	// handled them (production passes nil/nop).
 	NextSink sessions.EventSink
+	// Auth gates sensitive tools. Nil allows, matching existing tests.
+	Auth permission.Authorizer
 }
 
 // sessionMeta is one session's MCP-side state. Passwords never live here.
@@ -123,6 +126,7 @@ type Runtime struct {
 	sink    *runtimeSink
 	maxSess int
 	idleTmo time.Duration
+	auth    permission.Authorizer
 
 	mu      sync.Mutex
 	meta    map[string]*sessionMeta
@@ -173,6 +177,7 @@ func New(d Deps) *Runtime {
 		clock:   clock,
 		maxSess: maxSess,
 		idleTmo: idle,
+		auth:    d.Auth,
 		meta:    map[string]*sessionMeta{},
 	}
 	r.tombstones = map[string]bool{}
@@ -208,6 +213,31 @@ func (r *Runtime) SetManager(m SessionManager) {
 // SetSFTP attaches the SFTP service after construction.
 func (r *Runtime) SetSFTP(s SFTP) {
 	r.sftp = s
+}
+
+func (r *Runtime) sessionTitle(sessionID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if m := r.meta[sessionID]; m != nil {
+		return m.title
+	}
+	return ""
+}
+
+// authorize asks before a sensitive MCP tool runs. Nil Auth allows (tests).
+// The request never carries file contents or passwords.
+func (r *Runtime) authorize(ctx context.Context, tool, sessionID, summary, detail string) error {
+	if r.auth == nil {
+		return nil
+	}
+	return r.auth.Authorize(ctx, permission.Request{
+		Source:    permission.SourceMCP,
+		Tool:      tool,
+		SessionID: sessionID,
+		Title:     r.sessionTitle(sessionID),
+		Summary:   permission.Truncate(summary),
+		Detail:    detail,
+	})
 }
 
 // runtimeSink forwards session events to the runtime's closed handler, then
@@ -249,6 +279,9 @@ func (r *Runtime) onClosed(sessionID string) {
 	r.mu.Unlock()
 	if ok {
 		r.sftpDispose(sessionID)
+	}
+	if f, ok := r.auth.(interface{ ForgetSession(string) }); ok {
+		f.ForgetSession(sessionID)
 	}
 }
 

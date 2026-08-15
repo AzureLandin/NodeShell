@@ -81,9 +81,14 @@ func runGUI() int {
 	detachConsole()
 	app := NewApp()
 	err := wails.Run(&options.App{
-		Title:  "NodeShell",
-		Width:  1200,
-		Height: 800,
+		Title:     "NodeShell",
+		Width:     fallbackWindowWidth,
+		Height:    fallbackWindowHeight,
+		MinWidth:  minWindowWidth,
+		MinHeight: minWindowHeight,
+		// Hidden until applyInitialWindowSize has clamped to 80% of the
+		// current screen, so a 1200x800 fallback never flashes off-screen.
+		StartHidden: true,
 		// Match theme.css --bg-app dark default so the native window is not
 		// white for a frame before the WebView paints (startup flash).
 		BackgroundColour: options.NewRGB(0x12, 0x12, 0x12),
@@ -100,7 +105,10 @@ func runGUI() int {
 			EnableFileDrop:     true,
 			DisableWebViewDrop: false,
 		},
-		OnStartup: app.startup,
+		OnStartup: func(ctx context.Context) {
+			app.startup(ctx)
+			applyInitialWindowSize(ctx)
+		},
 		// Dispose all SSH sessions and in-flight connects before the WebView
 		// tears down, so no goroutine outlives the runtime context.
 		OnShutdown: app.shutdown,

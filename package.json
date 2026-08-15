@@ -44,7 +44,9 @@
         "@radix-ui/react-select": "^2.3.3",
         "codemirror": "^6.0.2",
         "i18next": "^26.3.6",
-        "react-i18next": "^17.0.9"
+        "react-i18next": "^17.0.9",
+        "react-markdown": "^10.1.0",
+        "remark-gfm": "^4.0.1"
     },
     "devDependencies": {
         "@eslint/js": "^9.39.4",

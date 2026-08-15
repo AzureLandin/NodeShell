@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nodeshell/internal/credentials"
+	"nodeshell/internal/permission"
 )
 
 // nopCredBackend satisfies credentials.Backend without touching the OS
@@ -33,13 +34,14 @@ func TestRunMCPHandshake(t *testing.T) {
 		t.Fatalf("write hosts fixture: %v", err)
 	}
 
-	oldDir, oldHome, oldCreds := resolveDataDir, userHomeDir, newCredentials
+	oldDir, oldHome, oldCreds, oldGate := resolveDataDir, userHomeDir, newCredentials, newPermissionGate
 	t.Cleanup(func() {
-		resolveDataDir, userHomeDir, newCredentials = oldDir, oldHome, oldCreds
+		resolveDataDir, userHomeDir, newCredentials, newPermissionGate = oldDir, oldHome, oldCreds, oldGate
 	})
 	resolveDataDir = func() (string, error) { return dir, nil }
 	userHomeDir = func() (string, error) { return t.TempDir(), nil }
 	newCredentials = func() *credentials.Store { return credentials.New(nopCredBackend{}) }
+	newPermissionGate = func() permission.Gate { return permission.AllowGate{} }
 
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"smoke","version":"1"},"capabilities":{}}}`,

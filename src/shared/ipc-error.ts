@@ -13,6 +13,7 @@ const SSH_CODES: ReadonlySet<string> = new Set([
   'MCP_SESSION_LIMIT',
   'HOST_NOT_FOUND',
   'CANCELLED',
+  'PERMISSION_DENIED',
   'UNKNOWN'
 ])
 

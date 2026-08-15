@@ -2,12 +2,26 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   LanguageCode,
+  McpManualConfig,
   McpRegistrationTargetStatus,
+  McpSnippetFormat,
+  PermissionPolicy,
   ThemePreference
 } from '../../../shared/types'
 import { AboutModal } from './AboutModal'
 import { ModalShell, useModalClose } from './ModalShell'
 import { Select } from './Select'
+
+const MCP_SNIPPET_FORMATS: McpSnippetFormat[] = ['standard', 'vscode', 'opencode', 'codex']
+
+function formatMcpLaunchCommand(command: string, args: string[]): string {
+  const quote = (s: string): string => {
+    if (s === '') return '""'
+    if (/[\s"]/.test(s)) return `"${s.replace(/"/g, '\\"')}"`
+    return s
+  }
+  return [command, ...args].map(quote).join(' ')
+}
 
 interface SettingsModalProps {
   language: LanguageCode
@@ -16,13 +30,153 @@ interface SettingsModalProps {
   terminalFontSize: number
   mcpIdleTimeoutMinutes: number
   mcpMaxSessions: number
+  permissionPolicy: PermissionPolicy
   onLanguageChange: (language: LanguageCode) => void
   onThemePreferenceChange: (theme: ThemePreference) => void
   onTerminalFontFamilyChange: (family: string) => void
   onTerminalFontSizeChange: (size: number) => void
   onMcpIdleTimeoutMinutesChange: (minutes: number) => void
   onMcpMaxSessionsChange: (max: number) => void
+  onPermissionPolicyChange: (policy: PermissionPolicy) => void
   onClose: () => void
+}
+
+/**
+ * Agent endpoint settings. The API key is write-only from here: the backend
+ * stores it in the OS keyring and reports back only whether one exists, so the
+ * renderer never holds the secret and the field starts empty on every open.
+ * The section is skipped entirely when the running bridge has no agent.
+ */
+function AgentSettingsSection(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const agent = window.api.agent
+  const [baseUrl, setBaseUrl] = useState('')
+  const [model, setModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [configured, setConfigured] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [ready, setReady] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!agent) return
+    void (async () => {
+      try {
+        const status = await agent.status()
+        setBaseUrl(status.baseUrl)
+        setModel(status.model)
+        setConfigured(status.configured)
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : String(err))
+      } finally {
+        setReady(true)
+      }
+    })()
+  }, [agent])
+
+  if (!agent) return null
+
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const status = await agent.setConfig({
+        baseUrl,
+        model,
+        // An untouched key field must not clear the stored key.
+        ...(apiKey === '' ? {} : { apiKey })
+      })
+      setBaseUrl(status.baseUrl)
+      setModel(status.model)
+      setConfigured(status.configured)
+      setApiKey('')
+      setMessage(t('settings.agentSaved'))
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clearKey = async (): Promise<void> => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const status = await agent.setConfig({ apiKey: '' })
+      setConfigured(status.configured)
+      setApiKey('')
+      setMessage(t('settings.agentKeyCleared'))
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <fieldset className="settings-section">
+      <legend>{t('settings.agent')}</legend>
+      <p className="settings-hint">{t('settings.agentHint')}</p>
+
+      <div className="form-field">
+        <span>{t('settings.agentBaseUrl')}</span>
+        <input
+          type="text"
+          value={baseUrl}
+          spellCheck={false}
+          aria-label={t('settings.agentBaseUrl')}
+          disabled={!ready || busy}
+          onChange={(e) => setBaseUrl(e.target.value)}
+        />
+      </div>
+
+      <div className="form-field">
+        <span>{t('settings.agentModel')}</span>
+        <input
+          type="text"
+          value={model}
+          spellCheck={false}
+          aria-label={t('settings.agentModel')}
+          disabled={!ready || busy}
+          onChange={(e) => setModel(e.target.value)}
+        />
+      </div>
+
+      <div className="form-field">
+        <span>{t('settings.agentApiKey')}</span>
+        <input
+          type="password"
+          value={apiKey}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t('settings.agentApiKey')}
+          placeholder={configured ? t('settings.agentKeyStored') : t('settings.agentKeyMissing')}
+          disabled={!ready || busy}
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+      </div>
+
+      <div className="mcp-register-actions">
+        <button
+          type="button"
+          className="btn-primary btn-sm"
+          disabled={!ready || busy}
+          onClick={() => void save()}
+        >
+          {t('settings.agentSave')}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary btn-sm"
+          disabled={!ready || busy || !configured}
+          onClick={() => void clearKey()}
+        >
+          {t('settings.agentClearKey')}
+        </button>
+      </div>
+      {message && <p className="mcp-register-message">{message}</p>}
+    </fieldset>
+  )
 }
 
 function SettingsModalBody({
@@ -32,18 +186,22 @@ function SettingsModalBody({
   terminalFontSize,
   mcpIdleTimeoutMinutes,
   mcpMaxSessions,
+  permissionPolicy,
   onLanguageChange,
   onThemePreferenceChange,
   onTerminalFontFamilyChange,
   onTerminalFontSizeChange,
   onMcpIdleTimeoutMinutesChange,
   onMcpMaxSessionsChange,
+  onPermissionPolicyChange,
   onOpenAbout
 }: Omit<SettingsModalProps, 'onClose'> & { onOpenAbout: () => void }): React.JSX.Element {
   const { t } = useTranslation()
   const requestClose = useModalClose()
   const [fonts, setFonts] = useState<string[]>([])
   const [mcpTargets, setMcpTargets] = useState<McpRegistrationTargetStatus[]>([])
+  const [mcpManual, setMcpManual] = useState<McpManualConfig | null>(null)
+  const [mcpFormat, setMcpFormat] = useState<McpSnippetFormat>('standard')
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpMessage, setMcpMessage] = useState<string | null>(null)
 
@@ -53,6 +211,16 @@ function SettingsModalBody({
       setMcpTargets(rows)
     } catch (err) {
       setMcpTargets([])
+      setMcpMessage(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const refreshMcpManual = async (): Promise<void> => {
+    try {
+      const kit = await window.api.mcpRegistration.manualConfig()
+      setMcpManual(kit)
+    } catch (err) {
+      setMcpManual(null)
       setMcpMessage(err instanceof Error ? err.message : String(err))
     }
   }
@@ -67,6 +235,7 @@ function SettingsModalBody({
       }
     })()
     void refreshMcpStatus()
+    void refreshMcpManual()
   }, [])
 
   const registerMcp = async (target: 'all' | McpRegistrationTargetStatus['id']): Promise<void> => {
@@ -88,18 +257,28 @@ function SettingsModalBody({
     }
   }
 
-  const copyMcpSnippet = async (): Promise<void> => {
+  const copyText = async (text: string, okKey: string): Promise<void> => {
     setMcpBusy(true)
     setMcpMessage(null)
     try {
-      const text = await window.api.mcpRegistration.clipboardSnippet()
       await navigator.clipboard.writeText(text)
-      setMcpMessage(t('settings.mcpCopyOk'))
+      setMcpMessage(t(okKey))
     } catch (err) {
       setMcpMessage(err instanceof Error ? err.message : String(err))
     } finally {
       setMcpBusy(false)
     }
+  }
+
+  const copyMcpSnippet = async (): Promise<void> => {
+    const text = mcpManual?.snippets[mcpFormat]
+    if (!text) return
+    await copyText(text, 'settings.mcpCopyOk')
+  }
+
+  const copyMcpCommand = async (): Promise<void> => {
+    if (!mcpManual) return
+    await copyText(formatMcpLaunchCommand(mcpManual.command, mcpManual.args), 'settings.mcpCopyCommandOk')
   }
 
   const fontOptions =
@@ -222,6 +401,26 @@ function SettingsModalBody({
               />
             </div>
           </fieldset>
+
+          <AgentSettingsSection />
+
+          <fieldset className="settings-section">
+            <legend>{t('settings.permissions')}</legend>
+            <p className="settings-hint">{t('settings.permissionsHint')}</p>
+            <div className="form-field">
+              <span>{t('settings.permissionPolicy')}</span>
+              <Select
+                value={permissionPolicy}
+                onChange={(v) => onPermissionPolicyChange(v as PermissionPolicy)}
+                aria-label={t('settings.permissionPolicy')}
+                options={[
+                  { value: 'ask', label: t('settings.permissionAsk') },
+                  { value: 'allow', label: t('settings.permissionAllow') },
+                  { value: 'deny', label: t('settings.permissionDeny') }
+                ]}
+              />
+            </div>
+          </fieldset>
         </div>
 
         <fieldset className="settings-section settings-section--mcp">
@@ -270,14 +469,6 @@ function SettingsModalBody({
               >
                 {t('settings.mcpRegisterAll')}
               </button>
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                disabled={mcpBusy}
-                onClick={() => void copyMcpSnippet()}
-              >
-                {t('settings.mcpCopyConfig')}
-              </button>
             </div>
             <ul className="mcp-register-list">
               {mcpTargets.map((row) => {
@@ -290,6 +481,11 @@ function SettingsModalBody({
                   <li key={row.id} className="mcp-register-row">
                     <div className="mcp-register-meta">
                       <span className="mcp-register-name">{row.label}</span>
+                      {row.configPath ? (
+                        <span className="mcp-register-path" title={row.configPath}>
+                          {row.configPath}
+                        </span>
+                      ) : null}
                       <span
                         className={`mcp-register-status${row.registered ? ' is-ok' : row.stale ? ' is-stale' : ''}`}
                       >
@@ -308,6 +504,78 @@ function SettingsModalBody({
                 )
               })}
             </ul>
+          </div>
+
+          <div className="mcp-register-block">
+            <div className="mcp-register-title">{t('settings.mcpOtherTitle')}</div>
+            <p className="settings-hint">{t('settings.mcpOtherHint')}</p>
+            <div className="mcp-launch-row">
+              <label className="mcp-launch-field">
+                <span>{t('settings.mcpLaunchCommand')}</span>
+                <input
+                  type="text"
+                  readOnly
+                  className="mcp-launch-input"
+                  aria-label={t('settings.mcpLaunchCommand')}
+                  value={
+                    mcpManual
+                      ? formatMcpLaunchCommand(mcpManual.command, mcpManual.args)
+                      : ''
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={mcpBusy || !mcpManual}
+                onClick={() => void copyMcpCommand()}
+              >
+                {t('settings.mcpCopyCommand')}
+              </button>
+            </div>
+            <div
+              className="mcp-format-tabs"
+              role="tablist"
+              aria-label={t('settings.mcpSnippetFormat')}
+            >
+              {MCP_SNIPPET_FORMATS.map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  role="tab"
+                  aria-selected={mcpFormat === format}
+                  className={`mcp-format-tab${mcpFormat === format ? ' is-active' : ''}`}
+                  onClick={() => setMcpFormat(format)}
+                >
+                  {t(`settings.mcpFormat.${format}`)}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="mcp-snippet-preview"
+              readOnly
+              spellCheck={false}
+              aria-label={t('settings.mcpSnippetPreview')}
+              value={mcpManual?.snippets[mcpFormat] ?? ''}
+            />
+            <div className="mcp-register-actions">
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={mcpBusy || !mcpManual?.snippets[mcpFormat]}
+                onClick={() => void copyMcpSnippet()}
+              >
+                {t('settings.mcpCopyConfig')}
+              </button>
+            </div>
+            <div className="mcp-paste-locations">
+              <div className="mcp-paste-title">{t('settings.mcpPasteLocations')}</div>
+              <ul>
+                <li>{t('settings.mcpPasteClaudeDesktop')}</li>
+                <li>{t('settings.mcpPasteVscode')}</li>
+                <li>{t('settings.mcpPasteWindsurf')}</li>
+              </ul>
+            </div>
             {mcpMessage && <p className="mcp-register-message">{mcpMessage}</p>}
           </div>
         </fieldset>

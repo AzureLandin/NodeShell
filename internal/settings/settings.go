@@ -20,7 +20,9 @@ import (
 	"nodeshell/internal/atomicfile"
 )
 
-// AppSettings mirrors src/shared/types.ts AppSettings.
+// AppSettings mirrors src/shared/types.ts AppSettings. The agent fields hold
+// the non-secret half of the sidebar assistant's configuration; its API key
+// lives in the OS keyring and never in this file.
 type AppSettings struct {
 	Language              string `json:"language"`
 	TerminalFontFamily    string `json:"terminalFontFamily"`
@@ -28,9 +30,16 @@ type AppSettings struct {
 	McpIdleTimeoutMinutes int    `json:"mcpIdleTimeoutMinutes"`
 	McpMaxSessions        int    `json:"mcpMaxSessions"`
 	ThemePreference       string `json:"themePreference"`
+	AgentBaseURL          string `json:"agentBaseUrl"`
+	AgentModel            string `json:"agentModel"`
+	// PermissionPolicy is ask (default), allow, or deny. It gates sensitive
+	// agent and MCP tools (commands, writes, uploads, downloads).
+	PermissionPolicy string `json:"permissionPolicy"`
 }
 
-// Defaults matches DEFAULT_SETTINGS in settings-store.ts.
+// Defaults matches DEFAULT_SETTINGS in settings-store.ts, plus the agent
+// endpoint defaults (an OpenAI-compatible base URL including the provider's
+// version prefix, following the OPENAI_BASE_URL convention).
 var Defaults = AppSettings{
 	Language:              "zh",
 	TerminalFontFamily:    "Hack",
@@ -38,6 +47,9 @@ var Defaults = AppSettings{
 	McpIdleTimeoutMinutes: 10,
 	McpMaxSessions:        8,
 	ThemePreference:       "system",
+	AgentBaseURL:          "https://api.openai.com/v1",
+	AgentModel:            "gpt-4o-mini",
+	PermissionPolicy:      "ask",
 }
 
 // Bounds from settings-store.ts.
@@ -48,6 +60,10 @@ const (
 	McpIdleTimeoutMax = 120
 	McpMaxSessionsMin = 1
 	McpMaxSessionsMax = 32
+	// AgentFieldMaxLen bounds the agent endpoint strings. A value longer than
+	// this is treated as garbage and falls back to the default rather than
+	// being persisted and sent to an endpoint.
+	AgentFieldMaxLen = 512
 )
 
 // Patch mirrors the Partial<AppSettings> passed to settings.set; nil fields
@@ -60,6 +76,9 @@ type Patch struct {
 	McpIdleTimeoutMinutes *float64 `json:"mcpIdleTimeoutMinutes"`
 	McpMaxSessions        *float64 `json:"mcpMaxSessions"`
 	ThemePreference       *string  `json:"themePreference"`
+	AgentBaseURL          *string  `json:"agentBaseUrl"`
+	AgentModel            *string  `json:"agentModel"`
+	PermissionPolicy      *string  `json:"permissionPolicy"`
 }
 
 // Error carries the stable config error code the frontend maps onto
@@ -84,6 +103,9 @@ type fileSettings struct {
 	McpIdleTimeoutMinutes json.RawMessage `json:"mcpIdleTimeoutMinutes"`
 	McpMaxSessions        json.RawMessage `json:"mcpMaxSessions"`
 	ThemePreference       json.RawMessage `json:"themePreference"`
+	AgentBaseURL          json.RawMessage `json:"agentBaseUrl"`
+	AgentModel            json.RawMessage `json:"agentModel"`
+	PermissionPolicy      json.RawMessage `json:"permissionPolicy"`
 }
 
 // Store reads and writes settings.json. Like the TS store it has no cache:
@@ -137,6 +159,7 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 		current.Language, current.TerminalFontFamily,
 		float64(current.TerminalFontSize), float64(current.McpIdleTimeoutMinutes),
 		float64(current.McpMaxSessions), current.ThemePreference
+	agentURL, agentModel, permPolicy := current.AgentBaseURL, current.AgentModel, current.PermissionPolicy
 	if patch.Language != nil {
 		lang = *patch.Language
 	}
@@ -155,6 +178,15 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 	if patch.ThemePreference != nil {
 		theme = *patch.ThemePreference
 	}
+	if patch.AgentBaseURL != nil {
+		agentURL = *patch.AgentBaseURL
+	}
+	if patch.AgentModel != nil {
+		agentModel = *patch.AgentModel
+	}
+	if patch.PermissionPolicy != nil {
+		permPolicy = *patch.PermissionPolicy
+	}
 	next := AppSettings{
 		Language:              normalizeLanguage(lang),
 		TerminalFontFamily:    normalizeTerminalFontFamily(fam),
@@ -162,6 +194,9 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 		McpIdleTimeoutMinutes: normalizeMcpIdleTimeoutMinutes(idle),
 		McpMaxSessions:        normalizeMcpMaxSessions(max),
 		ThemePreference:       normalizeThemePreference(theme),
+		AgentBaseURL:          normalizeAgentBaseURL(agentURL),
+		AgentModel:            normalizeAgentModel(agentModel),
+		PermissionPolicy:      normalizePermissionPolicy(permPolicy),
 	}
 	if err := s.write(next); err != nil {
 		return AppSettings{}, err
@@ -243,6 +278,40 @@ func normalizeThemePreference(value string) string {
 		return value
 	}
 	return Defaults.ThemePreference
+}
+
+// normalizeAgentBaseURL keeps only an http(s) URL of sane length; anything
+// else falls back to the default, so a corrupt or hostile settings file can
+// never redirect the assistant to a non-HTTP scheme (file:, data:).
+func normalizeAgentBaseURL(value string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(value), "/")
+	if trimmed == "" || len(trimmed) > AgentFieldMaxLen {
+		return Defaults.AgentBaseURL
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return Defaults.AgentBaseURL
+	}
+	return trimmed
+}
+
+func normalizeAgentModel(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || len(trimmed) > AgentFieldMaxLen {
+		return Defaults.AgentModel
+	}
+	return trimmed
+}
+
+// normalizePermissionPolicy keeps only ask/allow/deny; anything else falls
+// back to ask so a corrupt file never silently auto-allows tool calls.
+func normalizePermissionPolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ask", "allow", "deny":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return Defaults.PermissionPolicy
+	}
 }
 
 // coerceString resolves a string field the way the TS normalize* functions
@@ -371,5 +440,8 @@ func normalizeSettings(raw fileSettings) AppSettings {
 		McpIdleTimeoutMinutes: normalizeMcpIdleTimeoutMinutes(coerceNumber(raw.McpIdleTimeoutMinutes)),
 		McpMaxSessions:        normalizeMcpMaxSessions(coerceNumber(raw.McpMaxSessions)),
 		ThemePreference:       normalizeThemePreference(coerceString(raw.ThemePreference)),
+		AgentBaseURL:          normalizeAgentBaseURL(coerceString(raw.AgentBaseURL)),
+		AgentModel:            normalizeAgentModel(coerceString(raw.AgentModel)),
+		PermissionPolicy:      normalizePermissionPolicy(coerceString(raw.PermissionPolicy)),
 	}
 }

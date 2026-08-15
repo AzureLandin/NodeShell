@@ -70,9 +70,17 @@ describe('ipc-error', () => {
     })
   })
 
-  it('parses a Go-formatted NODESHELL_ERR:HOST_NOT_FOUND payload', () => {
-    expect(
-      parseIpcThrownError(new Error('NODESHELL_ERR:HOST_NOT_FOUND:Host not found: x'))
-    ).toEqual({ code: 'HOST_NOT_FOUND', message: 'Host not found: x' })
-  })
+	it('round-trips PERMISSION_DENIED across IPC', () => {
+		const e = toIpcThrownError({ code: 'PERMISSION_DENIED', message: 'Permission denied' })
+		expect(parseIpcThrownError(e)).toEqual({
+			code: 'PERMISSION_DENIED',
+			message: 'Permission denied'
+		})
+	})
+
+	it('parses a Go-formatted NODESHELL_ERR:HOST_NOT_FOUND payload', () => {
+		expect(
+			parseIpcThrownError(new Error('NODESHELL_ERR:HOST_NOT_FOUND:Host not found: x'))
+		).toEqual({ code: 'HOST_NOT_FOUND', message: 'Host not found: x' })
+	})
 })

@@ -520,16 +520,100 @@ func mergeCodexTOML(text string, spec LaunchSpec) string {
 	return trimmed + eol + eol + block
 }
 
+// ManualSnippets holds paste-ready configs for other MCP clients. Each string
+// has no trailing newline (TS parity with the original clipboard snippet).
+type ManualSnippets struct {
+	Standard string `json:"standard"`
+	VSCode   string `json:"vscode"`
+	OpenCode string `json:"opencode"`
+	Codex    string `json:"codex"`
+}
+
+// ManualConfig is the other-client kit: the native launch spec plus one
+// snippet per paste format. The four one-click targets stay separate.
+type ManualConfig struct {
+	Command  string         `json:"command"`
+	Args     []string       `json:"args"`
+	Snippets ManualSnippets `json:"snippets"`
+}
+
+type stdioSnippetServer struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+type vscodeSnippetServer struct {
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+type openCodeSnippetServer struct {
+	Type    string   `json:"type"`
+	Command []string `json:"command"`
+	Enabled bool     `json:"enabled"`
+}
+
+func marshalSnippet(v any) string {
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // clipboardSnippet mirrors buildClipboardSnippet: a copy-paste mcpServers
 // JSON for manual configuration, without a trailing newline (TS parity).
 func clipboardSnippet(spec LaunchSpec) string {
-	doc := map[string]any{
-		"mcpServers": map[string]any{
-			"nodeshell": map[string]any{"command": spec.Command, "args": spec.Args},
+	return snippetStandard(spec)
+}
+
+func snippetStandard(spec LaunchSpec) string {
+	return marshalSnippet(struct {
+		McpServers map[string]stdioSnippetServer `json:"mcpServers"`
+	}{
+		McpServers: map[string]stdioSnippetServer{
+			"nodeshell": {Command: spec.Command, Args: spec.Args},
+		},
+	})
+}
+
+func snippetVSCode(spec LaunchSpec) string {
+	return marshalSnippet(struct {
+		Servers map[string]vscodeSnippetServer `json:"servers"`
+	}{
+		Servers: map[string]vscodeSnippetServer{
+			"nodeshell": {Type: "stdio", Command: spec.Command, Args: spec.Args},
+		},
+	})
+}
+
+func snippetOpenCode(spec LaunchSpec) string {
+	command := append([]string{spec.Command}, spec.Args...)
+	return marshalSnippet(struct {
+		Mcp map[string]openCodeSnippetServer `json:"mcp"`
+	}{
+		Mcp: map[string]openCodeSnippetServer{
+			"nodeshell": {Type: "local", Command: command, Enabled: true},
+		},
+	})
+}
+
+func snippetCodex(spec LaunchSpec) string {
+	return strings.TrimRight(renderCodexBlock(spec, "\n"), "\n")
+}
+
+func manualConfig(spec LaunchSpec) ManualConfig {
+	return ManualConfig{
+		Command: spec.Command,
+		Args:    append([]string{}, spec.Args...),
+		Snippets: ManualSnippets{
+			Standard: snippetStandard(spec),
+			VSCode:   snippetVSCode(spec),
+			OpenCode: snippetOpenCode(spec),
+			Codex:    snippetCodex(spec),
 		},
 	}
-	out, _ := json.MarshalIndent(doc, "", "  ")
-	return string(out)
 }
 
 // Service registers the native MCP launcher into client configs. It is
@@ -690,13 +774,25 @@ func (s *Service) registerOne(t Target, home string, spec LaunchSpec) Result {
 }
 
 // ClipboardSnippet returns a JSON mcpServers block for manual configuration,
-// built from the native spec (exe + --mcp).
+// built from the native spec (exe + --mcp). Equivalent to ManualConfig's
+// standard snippet.
 func (s *Service) ClipboardSnippet() (string, error) {
 	spec, err := s.launchSpec()
 	if err != nil {
 		return "", err
 	}
 	return clipboardSnippet(spec), nil
+}
+
+// ManualConfig returns the native launch spec and paste-ready snippets for
+// other MCP clients (standard mcpServers JSON, VS Code servers, OpenCode,
+// Codex TOML).
+func (s *Service) ManualConfig() (ManualConfig, error) {
+	spec, err := s.launchSpec()
+	if err != nil {
+		return ManualConfig{}, err
+	}
+	return manualConfig(spec), nil
 }
 
 // readTextIfExists reads a file, mapping a missing file to an empty string.

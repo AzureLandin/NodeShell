@@ -4,7 +4,13 @@ import i18n from 'i18next'
 import { vi } from 'vitest'
 import type { ReactElement } from 'react'
 import type {
+  AgentDeltaEvent,
+  AgentDoneEvent,
+  AgentErrorEvent,
+  AgentToolEvent,
   ElectronApi,
+  PermissionAskEvent,
+  PermissionClosedEvent,
   SessionClosedEvent,
   SessionDataEvent,
   SessionErrorEvent
@@ -46,6 +52,8 @@ export interface ApiMocks {
   sftp: MockGroup<ElectronApi['sftp']>
   files: MockGroup<ElectronApi['files']>
   monitor: MockGroup<ElectronApi['monitor']>
+  agent: MockGroup<NonNullable<ElectronApi['agent']>>
+  permission: MockGroup<ElectronApi['permission']>
   fonts: MockGroup<ElectronApi['fonts']>
   app: MockGroup<ElectronApi['app']>
   mcpRegistration: MockGroup<ElectronApi['mcpRegistration']>
@@ -94,9 +102,25 @@ export function createFakeApi(): FakeApi {
       onDrop: vi.fn(() => vi.fn())
     },
     monitor: { setActive: vi.fn(), onUpdate: vi.fn(() => () => undefined) },
+    agent: {
+      status: vi.fn(),
+      setConfig: vi.fn(),
+      prompt: vi.fn(),
+      abort: vi.fn(),
+      clear: vi.fn(),
+      onDelta: vi.fn(() => () => undefined),
+      onTool: vi.fn(() => () => undefined),
+      onDone: vi.fn(() => () => undefined),
+      onError: vi.fn(() => () => undefined)
+    },
+    permission: {
+      decide: vi.fn(),
+      onAsk: vi.fn(() => () => undefined),
+      onClosed: vi.fn(() => () => undefined)
+    },
     fonts: { list: vi.fn() },
-    app: { getVersion: vi.fn() },
-    mcpRegistration: { status: vi.fn(), register: vi.fn(), clipboardSnippet: vi.fn() },
+    app: { getVersion: vi.fn(), openExternal: vi.fn() },
+    mcpRegistration: { status: vi.fn(), register: vi.fn(), clipboardSnippet: vi.fn(), manualConfig: vi.fn() },
     dialog: { openPrivateKeyFile: vi.fn() }
   }
 
@@ -108,6 +132,8 @@ export function createFakeApi(): FakeApi {
     sftp: mocks.sftp,
     files: mocks.files,
     monitor: mocks.monitor,
+    agent: mocks.agent,
+    permission: mocks.permission,
     fonts: mocks.fonts,
     app: mocks.app,
     mcpRegistration: mocks.mcpRegistration,
@@ -122,6 +148,24 @@ export function installFakeApi(): FakeApi {
   // Benign defaults: components must never crash on an unresolved mock.
   fake.mocks.fonts.list.mockResolvedValue([])
   fake.mocks.mcpRegistration.status.mockResolvedValue([])
+  fake.mocks.mcpRegistration.manualConfig.mockResolvedValue({
+    command: '/x/nodeshell',
+    args: ['--mcp'],
+    snippets: {
+      standard: '{\n  "mcpServers": {}\n}',
+      vscode: '{\n  "servers": {}\n}',
+      opencode: '{\n  "mcp": {}\n}',
+      codex: '[mcp_servers.nodeshell]'
+    }
+  })
+  fake.mocks.agent.status.mockResolvedValue({
+    configured: true,
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini'
+  })
+  fake.mocks.agent.prompt.mockResolvedValue(undefined)
+  fake.mocks.app.openExternal.mockResolvedValue(undefined)
+  fake.mocks.permission.decide.mockResolvedValue(undefined)
   ;(window as Window & { api: unknown }).api = fake.api
   return fake
 }
@@ -146,4 +190,41 @@ export function emitSessionEvent(
     ((p: SessionEventPayload) => void) | undefined
   if (!cb) throw new Error(`emitSessionEvent: ${key} never subscribed`)
   cb(payload)
+}
+
+type AgentEventKind = 'delta' | 'tool' | 'done' | 'error'
+type AgentEventPayload = AgentDeltaEvent | AgentToolEvent | AgentDoneEvent | AgentErrorEvent
+
+/** Deliver an agent event to the callback the panel registered on mount. */
+export function emitAgentEvent(
+  fake: FakeApi,
+  kind: AgentEventKind,
+  payload: AgentEventPayload
+): void {
+  const key = ('on' + kind[0].toUpperCase() + kind.slice(1)) as
+    | 'onDelta'
+    | 'onTool'
+    | 'onDone'
+    | 'onError'
+  const cb = fake.mocks.agent[key].mock.calls[0]?.[0] as
+    ((p: AgentEventPayload) => void) | undefined
+  if (!cb) throw new Error(`emitAgentEvent: ${key} never subscribed`)
+  cb(payload)
+}
+
+/** Deliver a permission event to the callback App registered on mount. */
+export function emitPermissionAsk(fake: FakeApi, event: PermissionAskEvent): void {
+  const cb = fake.mocks.permission.onAsk.mock.calls[0]?.[0] as
+    | ((p: PermissionAskEvent) => void)
+    | undefined
+  if (!cb) throw new Error('emitPermissionAsk: onAsk never subscribed')
+  cb(event)
+}
+
+export function emitPermissionClosed(fake: FakeApi, event: PermissionClosedEvent): void {
+  const cb = fake.mocks.permission.onClosed.mock.calls[0]?.[0] as
+    | ((p: PermissionClosedEvent) => void)
+    | undefined
+  if (!cb) throw new Error('emitPermissionClosed: onClosed never subscribed')
+  cb(event)
 }

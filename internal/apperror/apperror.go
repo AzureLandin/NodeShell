@@ -26,6 +26,9 @@ const (
 	// HostNotFound is the DNS-resolution failure code (HOST_NOT_FOUND).
 	HostNotFound = "HOST_NOT_FOUND"
 
+	// PermissionDenied is a rejected sensitive tool call (agent or MCP).
+	PermissionDenied = "PERMISSION_DENIED"
+
 	Unknown = "UNKNOWN"
 )
 
@@ -60,7 +63,7 @@ func knownCode(code string) bool {
 	case ConfigReadFailed, ConfigWriteFailed,
 		ConnectionRefused, Timeout, AuthFailed, HostUnreachable,
 		HostKeyChanged, HostKeyUnknown, HostNotFound, SessionNotFound, McpSessionLimit,
-		Cancelled, Unknown:
+		Cancelled, PermissionDenied, Unknown:
 		return true
 	}
 	return false

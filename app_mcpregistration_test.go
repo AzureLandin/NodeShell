@@ -36,6 +36,9 @@ func TestMcpRegistrationUninitialisedErrorsObservably(t *testing.T) {
 	if _, err := a.McpRegistrationClipboardSnippet(); !errors.Is(err, errBackendNotInitialised) {
 		t.Fatalf("McpRegistrationClipboardSnippet = %v, want errBackendNotInitialised", err)
 	}
+	if _, err := a.McpRegistrationManualConfig(); !errors.Is(err, errBackendNotInitialised) {
+		t.Fatalf("McpRegistrationManualConfig = %v, want errBackendNotInitialised", err)
+	}
 }
 
 func TestMcpRegistrationStatusDelegatesInUiOrder(t *testing.T) {
@@ -110,6 +113,20 @@ func TestMcpRegistrationClipboardSnippetDelegates(t *testing.T) {
 	}
 	if !strings.Contains(snippet, "--mcp") {
 		t.Fatalf("snippet %q must carry the --mcp arg", snippet)
+	}
+}
+
+func TestMcpRegistrationManualConfigDelegates(t *testing.T) {
+	a := mcpTestApp(t)
+	got, err := a.McpRegistrationManualConfig()
+	if err != nil {
+		t.Fatalf("McpRegistrationManualConfig: %v", err)
+	}
+	if got.Command == "" || !strings.Contains(got.Snippets.Standard, "--mcp") {
+		t.Fatalf("manual config = %+v, want command and standard snippet", got)
+	}
+	if got.Snippets.VSCode == "" || got.Snippets.OpenCode == "" || got.Snippets.Codex == "" {
+		t.Fatalf("manual config missing a snippet: %+v", got.Snippets)
 	}
 }
 

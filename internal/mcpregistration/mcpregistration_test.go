@@ -682,6 +682,78 @@ func TestServiceClipboardSnippetUsesNativeSpec(t *testing.T) {
 	}
 }
 
+func TestServiceManualConfigEmitsAllFormats(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "nodeshell.exe")
+	svc := NewWithSeams(
+		func() (string, error) { return exe, nil },
+		func() (string, error) { return t.TempDir(), nil },
+	)
+	got, err := svc.ManualConfig()
+	if err != nil {
+		t.Fatalf("ManualConfig: %v", err)
+	}
+	if got.Command != exe {
+		t.Fatalf("command = %q, want %q", got.Command, exe)
+	}
+	if !reflect.DeepEqual(got.Args, []string{"--mcp"}) {
+		t.Fatalf("args = %v, want [--mcp]", got.Args)
+	}
+
+	standard := parseTestJSON(t, got.Snippets.Standard)
+	ns := standard["mcpServers"].(map[string]any)["nodeshell"].(map[string]any)
+	if ns["command"] != exe || !reflect.DeepEqual(ns["args"], []any{"--mcp"}) {
+		t.Fatalf("standard snippet = %s", got.Snippets.Standard)
+	}
+
+	vscode := parseTestJSON(t, got.Snippets.VSCode)
+	vs := vscode["servers"].(map[string]any)["nodeshell"].(map[string]any)
+	if vs["type"] != "stdio" || vs["command"] != exe || !reflect.DeepEqual(vs["args"], []any{"--mcp"}) {
+		t.Fatalf("vscode snippet = %s", got.Snippets.VSCode)
+	}
+
+	opencode := parseTestJSON(t, got.Snippets.OpenCode)
+	oc := opencode["mcp"].(map[string]any)["nodeshell"].(map[string]any)
+	if oc["type"] != "local" || oc["enabled"] != true || !reflect.DeepEqual(oc["command"], []any{exe, "--mcp"}) {
+		t.Fatalf("opencode snippet = %s", got.Snippets.OpenCode)
+	}
+
+	if !strings.Contains(got.Snippets.Codex, "[mcp_servers.nodeshell]") {
+		t.Fatalf("codex snippet missing header: %s", got.Snippets.Codex)
+	}
+	if !strings.Contains(got.Snippets.Codex, tomlQuote(exe)) || !strings.Contains(got.Snippets.Codex, `--mcp`) {
+		t.Fatalf("codex snippet missing launch spec: %s", got.Snippets.Codex)
+	}
+
+	for name, text := range map[string]string{
+		"standard": got.Snippets.Standard,
+		"vscode":   got.Snippets.VSCode,
+		"opencode": got.Snippets.OpenCode,
+		"codex":    got.Snippets.Codex,
+	} {
+		if strings.HasSuffix(text, "\n") {
+			t.Fatalf("%s snippet must not end with a newline: %q", name, text)
+		}
+	}
+
+	snippet, err := svc.ClipboardSnippet()
+	if err != nil {
+		t.Fatalf("ClipboardSnippet: %v", err)
+	}
+	if got.Snippets.Standard != snippet {
+		t.Fatalf("standard snippet must match ClipboardSnippet")
+	}
+}
+
+func TestServiceManualConfigResolveExecutableError(t *testing.T) {
+	svc := NewWithSeams(
+		func() (string, error) { return "", errors.New("no exe") },
+		func() (string, error) { return t.TempDir(), nil },
+	)
+	if _, err := svc.ManualConfig(); !errors.Is(err, ErrResolveExecutable) {
+		t.Fatalf("ManualConfig error = %v, want ErrResolveExecutable", err)
+	}
+}
+
 func TestServiceStatusOrderAndLabels(t *testing.T) {
 	svc := NewWithSeams(
 		func() (string, error) { return filepath.Join(t.TempDir(), "nodeshell.exe"), nil },

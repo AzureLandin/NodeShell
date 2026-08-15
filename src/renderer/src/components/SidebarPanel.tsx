@@ -188,12 +188,11 @@ function NetProbe({
   )
 }
 
-export function SidebarPanel({
+function MonitorPanel({
   activeSessionId,
   activeSessionTitle,
-  connected,
-  onOpenSettings
-}: SidebarPanelProps): React.JSX.Element {
+  connected
+}: Pick<SidebarPanelProps, 'activeSessionId' | 'activeSessionTitle' | 'connected'>): React.JSX.Element {
   const { t } = useTranslation()
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -261,96 +260,116 @@ export function SidebarPanel({
       : 0
 
   return (
-    <div className="sidebar-panel">
-      <div className="sidebar-monitor">
-        <h2 className="sidebar-placeholder-title">{t('monitor.title')}</h2>
+    <div className="sidebar-monitor">
+      <h2 className="sidebar-placeholder-title">{t('monitor.title')}</h2>
 
-        {showLive && error && !snapshot && (
-          <p className="monitor-error">{error || t('monitor.unavailable')}</p>
-        )}
+      {showLive && error && !snapshot && (
+        <p className="monitor-error">{error || t('monitor.unavailable')}</p>
+      )}
 
-        <div className={`monitor-body${!snapshot ? ' monitor-body-idle' : ''}`}>
-          <p className="monitor-host" title={hostLabel === '—' ? undefined : hostLabel}>
-            {hostLabel}
-          </p>
+      <div className={`monitor-body${!snapshot ? ' monitor-body-idle' : ''}`}>
+        <p className="monitor-host" title={hostLabel === '—' ? undefined : hostLabel}>
+          {hostLabel}
+        </p>
 
-          <MetricBar
-            label={t('monitor.cpu')}
-            percentText={cpuText}
-            ratio={snapshot?.cpuPercent ?? 0}
-            tone="cpu"
-          />
+        <MetricBar
+          label={t('monitor.cpu')}
+          percentText={cpuText}
+          ratio={snapshot?.cpuPercent ?? 0}
+          tone="cpu"
+        />
 
-          <MetricBar
-            label={t('monitor.memory')}
-            percentText={!snapshot ? '—' : `${memPct.toFixed(0)}%`}
-            detailText={
-              !snapshot
-                ? '—/—'
-                : `${formatBytes(snapshot.memUsedBytes)}/${formatBytes(snapshot.memTotalBytes)}`
-            }
-            ratio={memPct}
-            tone="mem"
-          />
+        <MetricBar
+          label={t('monitor.memory')}
+          percentText={!snapshot ? '—' : `${memPct.toFixed(0)}%`}
+          detailText={
+            !snapshot
+              ? '—/—'
+              : `${formatBytes(snapshot.memUsedBytes)}/${formatBytes(snapshot.memTotalBytes)}`
+          }
+          ratio={memPct}
+          tone="mem"
+        />
 
-          <MetricBar
-            label={t('monitor.swap')}
-            percentText={
-              !snapshot ? '—' : snapshot.swapTotalBytes <= 0 ? '0%' : `${swapPct.toFixed(0)}%`
-            }
-            detailText={
-              !snapshot
-                ? '—/—'
-                : snapshot.swapTotalBytes <= 0
-                  ? t('monitor.noSwap')
-                  : `${formatBytes(snapshot.swapUsedBytes)}/${formatBytes(snapshot.swapTotalBytes)}`
-            }
-            ratio={swapPct}
-            tone="swap"
-          />
+        <MetricBar
+          label={t('monitor.swap')}
+          percentText={
+            !snapshot ? '—' : snapshot.swapTotalBytes <= 0 ? '0%' : `${swapPct.toFixed(0)}%`
+          }
+          detailText={
+            !snapshot
+              ? '—/—'
+              : snapshot.swapTotalBytes <= 0
+                ? t('monitor.noSwap')
+                : `${formatBytes(snapshot.swapUsedBytes)}/${formatBytes(snapshot.swapTotalBytes)}`
+          }
+          ratio={swapPct}
+          tone="swap"
+        />
 
-          <div className="monitor-load">
-            <span>{t('monitor.load')}</span>
-            <span>
-              {!snapshot
-                ? '— / — / —'
-                : `${snapshot.load1.toFixed(2)} / ${snapshot.load5.toFixed(2)} / ${snapshot.load15.toFixed(2)}`}
-            </span>
-          </div>
-
-          <div className="monitor-proc">
-            <div className="monitor-proc-head">
-              <span>{t('monitor.colMem')}</span>
-              <span className="monitor-proc-cpu">{t('monitor.colCpu')}</span>
-              <span>{t('monitor.colCmd')}</span>
-            </div>
-            <ul className="monitor-proc-list">
-              {(snapshot?.processes ?? []).length === 0 ? (
-                <li className="monitor-proc-empty">{!snapshot ? '—' : t('monitor.procEmpty')}</li>
-              ) : (
-                (snapshot?.processes ?? []).slice(0, 5).map((p, i) => (
-                  <li key={`${p.command}-${i}`} className="monitor-proc-row">
-                    <span>{formatBytes(p.memBytes ?? 0)}</span>
-                    <span className="monitor-proc-cpu">{Number(p.cpuPercent ?? 0).toFixed(1)}</span>
-                    <span className="monitor-proc-cmd" title={p.command}>
-                      {p.command}
-                    </span>
-                  </li>
-                ))
-              )}
-            </ul>
-          </div>
-
-          <NetProbe
-            rxBps={snapshot?.netRxBps ?? null}
-            txBps={snapshot?.netTxBps ?? null}
-            history={netHistory}
-          />
-
-          {showLive && error && snapshot && <p className="monitor-error">{error}</p>}
+        <div className="monitor-load">
+          <span>{t('monitor.load')}</span>
+          <span>
+            {!snapshot
+              ? '— / — / —'
+              : `${snapshot.load1.toFixed(2)} / ${snapshot.load5.toFixed(2)} / ${snapshot.load15.toFixed(2)}`}
+          </span>
         </div>
-      </div>
 
+        <div className="monitor-proc">
+          <div className="monitor-proc-head">
+            <span>{t('monitor.colMem')}</span>
+            <span className="monitor-proc-cpu">{t('monitor.colCpu')}</span>
+            <span>{t('monitor.colCmd')}</span>
+          </div>
+          <ul className="monitor-proc-list">
+            {(snapshot?.processes ?? []).length === 0 ? (
+              <li className="monitor-proc-empty">{!snapshot ? '—' : t('monitor.procEmpty')}</li>
+            ) : (
+              (snapshot?.processes ?? []).slice(0, 5).map((p, i) => (
+                <li key={`${p.command}-${i}`} className="monitor-proc-row">
+                  <span>{formatBytes(p.memBytes ?? 0)}</span>
+                  <span className="monitor-proc-cpu">{Number(p.cpuPercent ?? 0).toFixed(1)}</span>
+                  <span className="monitor-proc-cmd" title={p.command}>
+                    {p.command}
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+
+        <NetProbe
+          rxBps={snapshot?.netRxBps ?? null}
+          txBps={snapshot?.netTxBps ?? null}
+          history={netHistory}
+        />
+
+        {showLive && error && snapshot && <p className="monitor-error">{error}</p>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Left sidebar: host monitor plus the settings footer. The agent lives in
+ * the right-hand dock, so this panel no longer switches surfaces.
+ */
+export function SidebarPanel({
+  activeSessionId,
+  activeSessionTitle,
+  connected,
+  onOpenSettings
+}: SidebarPanelProps): React.JSX.Element {
+  const { t } = useTranslation()
+
+  return (
+    <div className="sidebar-panel">
+      <MonitorPanel
+        activeSessionId={activeSessionId}
+        activeSessionTitle={activeSessionTitle}
+        connected={connected}
+      />
       <div className="host-list-footer">
         <button type="button" className="btn-secondary btn-settings" onClick={onOpenSettings}>
           {t('settings.open')}

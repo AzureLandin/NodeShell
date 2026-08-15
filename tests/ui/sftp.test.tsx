@@ -52,16 +52,20 @@ describe('SftpPanel listing', () => {
 
     expect(fake.mocks.sftp.cwd).not.toHaveBeenCalled()
     expect(fake.mocks.sftp.list).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Files \(SFTP\)/ })).not.toHaveTextContent('/')
   })
 
   it('loads cwd and entries through the API when expanded', async () => {
     const { fake } = await renderExpandedPanel()
 
-    expect(screen.getByText('/home/user')).toBeInTheDocument()
+    expect(screen.getByLabelText('Directory')).toHaveValue('/home/user')
     expect(screen.getByText('docs')).toBeInTheDocument()
     expect(screen.getByText('readme.md')).toBeInTheDocument()
     expect(fake.mocks.sftp.cwd).toHaveBeenCalledWith('s1')
     expect(fake.mocks.sftp.list).toHaveBeenCalledWith('s1')
+    expect(screen.getByRole('button', { name: /Files \(SFTP\)/ })).not.toHaveTextContent(
+      '/home/user'
+    )
   })
 
   it('shows the placeholder when no session is connected', () => {
@@ -92,6 +96,66 @@ describe('SftpPanel listing', () => {
 
     await waitFor(() => expect(fake.mocks.sftp.chdir).toHaveBeenCalledWith('s1', 'docs'))
     expect(await screen.findByText('report.txt')).toBeInTheDocument()
+    expect(screen.getByLabelText('Directory')).toHaveValue('/home/user/docs')
+  })
+
+  it('navigates when an absolute path is submitted from the path field', async () => {
+    const fake = installFakeApi()
+    fake.mocks.sftp.cwd.mockResolvedValue('/home/user')
+    fake.mocks.sftp.list.mockResolvedValueOnce(listEntries())
+    fake.mocks.sftp.list.mockResolvedValueOnce([
+      {
+        name: 'hosts',
+        path: '/etc/hosts',
+        isDirectory: false,
+        size: 12,
+        modifyTime: 0
+      }
+    ])
+    fake.mocks.sftp.chdir.mockResolvedValue('/etc')
+    renderWithI18n(<SftpPanel sessionId="s1" connected expanded onToggle={vi.fn()} />)
+    await screen.findByText('docs')
+
+    const input = screen.getByLabelText('Directory')
+    const user = userEvent.setup()
+    await user.clear(input)
+    await user.type(input, '/etc')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(fake.mocks.sftp.chdir).toHaveBeenCalledWith('s1', '/etc'))
+    expect(await screen.findByText('hosts')).toBeInTheDocument()
+    expect(screen.getByLabelText('Directory')).toHaveValue('/etc')
+  })
+
+  it('restores the current directory when Escape is pressed in the path field', async () => {
+    await renderExpandedPanel()
+    const input = screen.getByLabelText('Directory')
+    const user = userEvent.setup()
+    await user.clear(input)
+    await user.type(input, '/tmp')
+    await user.keyboard('{Escape}')
+
+    expect(input).toHaveValue('/home/user')
+  })
+
+  it('restores the current directory when chdir from the path field fails', async () => {
+    const fake = installFakeApi()
+    fake.mocks.sftp.cwd.mockResolvedValue('/home/user')
+    fake.mocks.sftp.list.mockResolvedValue(listEntries())
+    fake.mocks.sftp.chdir.mockRejectedValue(new Error('no such file'))
+    renderWithI18n(<SftpPanel sessionId="s1" connected expanded onToggle={vi.fn()} />)
+    await screen.findByText('docs')
+
+    const input = screen.getByLabelText('Directory')
+    const user = userEvent.setup()
+    await user.clear(input)
+    await user.type(input, '/does/not/exist')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(fake.mocks.sftp.chdir).toHaveBeenCalledWith('s1', '/does/not/exist'))
+    await waitFor(() => expect(input).toHaveValue('/home/user'))
+    expect(await screen.findByText('no such file')).toBeInTheDocument()
+    expect(screen.getByText('docs')).toBeInTheDocument()
   })
 
   it('toggle button reports expand/collapse intent', async () => {

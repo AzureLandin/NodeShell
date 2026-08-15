@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faServer } from '@fortawesome/free-solid-svg-icons'
+import { faServer, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import type { ResolvedTheme } from '../../../shared/types'
 import type { UiSession } from '../hooks/useSessions'
 import { SftpPanel } from './SftpPanel'
@@ -17,6 +17,8 @@ interface SessionTabsProps {
   registerDataListener: (sessionId: string, cb: (data: string) => void) => () => void
   sftpExpanded: boolean
   onToggleSftp: () => void
+  agentOpen: boolean
+  onToggleAgent: () => void
   onOpenHosts: () => void
   terminalFontFamily: string
   terminalFontSize: number
@@ -38,6 +40,8 @@ export function SessionTabs({
   registerDataListener,
   sftpExpanded,
   onToggleSftp,
+  agentOpen,
+  onToggleAgent,
   onOpenHosts,
   terminalFontFamily,
   terminalFontSize,
@@ -102,6 +106,20 @@ export function SessionTabs({
             </button>
           </div>
         ))}
+
+        <div className="session-tab-bar-actions">
+          <button
+            type="button"
+            className="session-agent-toggle"
+            aria-pressed={agentOpen}
+            aria-label={agentOpen ? t('agent.hide') : t('agent.show')}
+            title={agentOpen ? t('agent.hide') : t('agent.show')}
+            onClick={onToggleAgent}
+          >
+            <FontAwesomeIcon icon={faWandMagicSparkles} className="session-agent-toggle-icon" aria-hidden />
+            <span>{t('agent.title')}</span>
+          </button>
+        </div>
       </div>
 
       <div className="session-terminal-area">

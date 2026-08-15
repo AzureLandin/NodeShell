@@ -166,8 +166,15 @@ describe('App connect flow', () => {
 
     expect(fake.mocks.sessions.cancelConnect).toHaveBeenCalledTimes(1)
 
-    // The cancelled connect yields no session, so no tab may ever appear.
-    await waitFor(() => expect(screen.queryByRole('tab')).not.toBeInTheDocument())
+    // The cancelled connect yields no session, so no session tab may ever
+    // appear. Scope to the session tab bar so the Agent toggle (a button, not
+    // a tab) cannot be mistaken for a session.
+    const tabBar = document.querySelector('.session-tab-bar') as HTMLElement
+    await waitFor(() => expect(within(tabBar).queryByRole('tab')).not.toBeInTheDocument())
+    expect(within(tabBar).getByRole('button', { name: 'Hide Agent' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   it('HOST_KEY_UNKNOWN shows the fingerprint; confirm retries with acceptHostKey, password preserved', async () => {
@@ -316,5 +323,27 @@ describe('App tab switching', () => {
     await waitFor(() => expect(fake.mocks.sessions.disconnect).toHaveBeenCalledWith('s2'))
     expect(screen.queryByRole('tab', { name: /Beta/ })).not.toBeInTheDocument()
     expect(alphaTab).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('shows the agent dock by default and hides it from the session tab bar', async () => {
+    await renderApp([])
+    const user = userEvent.setup()
+
+    expect(screen.getByRole('heading', { name: 'Agent' })).toBeVisible()
+    const actions = document.querySelector('.session-tab-bar-actions') as HTMLElement
+    const toggle = within(actions).getByRole('button', { name: 'Hide Agent' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle.tagName).toBe('BUTTON')
+
+    await user.click(toggle)
+    expect(screen.queryByRole('heading', { name: 'Agent' })).not.toBeInTheDocument()
+    expect(document.querySelector('.agent-dock')).toHaveClass('is-collapsed')
+    expect(toggle).toHaveAccessibleName('Show Agent')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(toggle)
+    expect(screen.getByRole('heading', { name: 'Agent' })).toBeVisible()
+    expect(document.querySelector('.agent-dock')).not.toHaveClass('is-collapsed')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
   })
 })

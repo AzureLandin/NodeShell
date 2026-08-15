@@ -14,6 +14,7 @@ import (
 	"nodeshell/internal/credentials/keyring"
 	"nodeshell/internal/hosts"
 	"nodeshell/internal/knownhosts"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/settings"
 	"nodeshell/internal/sftpservice"
@@ -79,6 +80,9 @@ var (
 	userHomeDir       = os.UserHomeDir
 	newCredentials    = func() *credentials.Store { return credentials.New(keyring.NewBackend()) }
 	newSessionManager = func(d sessions.Deps) mcpManager { return sessions.New(d) }
+	// newPermissionGate is NativeGate in production. Tests replace it so a
+	// tools/call never pops a real OS dialog.
+	newPermissionGate = func() permission.Gate { return &permission.NativeGate{} }
 )
 
 // RunMCP is the production --mcp entry: it resolves the OS data dir, wires
@@ -106,14 +110,25 @@ func RunMCP(ctx context.Context, in io.Reader, out io.Writer, errOut io.Writer) 
 	}
 
 	maxSessions, idleTimeout := DefaultMaxSessions, DefaultIdleTimeout
-	if st, err := settings.New(dir).Get(); err == nil {
+	store := settings.New(dir)
+	if st, err := store.Get(); err == nil {
 		maxSessions = st.McpMaxSessions
 		idleTimeout = time.Duration(st.McpIdleTimeoutMinutes) * time.Minute
 	} else {
 		fmt.Fprintf(errOut, "nodeshell: read settings: %v\n", err)
 	}
 
-	rt := New(Deps{Hosts: h, MaxSessions: maxSessions, IdleTimeout: idleTimeout})
+	auth := permission.NewService(permission.ServiceDeps{
+		Gate: newPermissionGate(),
+		Policy: func() permission.Policy {
+			st, err := store.Get()
+			if err != nil {
+				return permission.PolicyAsk
+			}
+			return permission.ParsePolicy(st.PermissionPolicy)
+		},
+	})
+	rt := New(Deps{Hosts: h, MaxSessions: maxSessions, IdleTimeout: idleTimeout, Auth: auth})
 	m := newSessionManager(sessions.Deps{
 		Hosts:    h,
 		HostKeys: k,

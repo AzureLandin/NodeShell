@@ -1,14 +1,24 @@
 import {
   IPC,
+  type AgentConfigPatch,
+  type AgentConfigStatus,
+  type AgentDeltaEvent,
+  type AgentDoneEvent,
+  type AgentErrorEvent,
+  type AgentToolEvent,
   type AppSettings,
   type ConnectOptions,
   type ElectronApi,
   type HostConfig,
   type HostInput,
+  type McpManualConfig,
   type McpRegistrationResult,
   type McpRegistrationTarget,
   type McpRegistrationTargetStatus,
   type MonitorUpdateEvent,
+  type PermissionAskEvent,
+  type PermissionClosedEvent,
+  type PermissionDecision,
   type SessionClosedEvent,
   type SessionDataEvent,
   type SessionErrorEvent,
@@ -171,11 +181,37 @@ export function createApi(bridge: ApiBridge): ElectronApi {
       onUpdate: (cb: (event: MonitorUpdateEvent) => void): (() => void) =>
         events.on<MonitorUpdateEvent>(IPC.monitorUpdate, cb)
     },
+    agent: {
+      status: (): Promise<AgentConfigStatus> => bridge.call<AgentConfigStatus>('AgentStatus'),
+      setConfig: (patch: AgentConfigPatch): Promise<AgentConfigStatus> =>
+        bridge.call<AgentConfigStatus>('AgentSetConfig', patch),
+      prompt: (sessionId: string, title: string, text: string): Promise<void> =>
+        bridge.call<void>('AgentPrompt', sessionId, title, text),
+      abort: (sessionId: string): Promise<void> => bridge.call<void>('AgentAbort', sessionId),
+      clear: (sessionId: string): Promise<void> => bridge.call<void>('AgentClear', sessionId),
+      onDelta: (cb: (event: AgentDeltaEvent) => void): (() => void) =>
+        events.on<AgentDeltaEvent>(IPC.agentDelta, cb),
+      onTool: (cb: (event: AgentToolEvent) => void): (() => void) =>
+        events.on<AgentToolEvent>(IPC.agentTool, cb),
+      onDone: (cb: (event: AgentDoneEvent) => void): (() => void) =>
+        events.on<AgentDoneEvent>(IPC.agentDone, cb),
+      onError: (cb: (event: AgentErrorEvent) => void): (() => void) =>
+        events.on<AgentErrorEvent>(IPC.agentError, cb)
+    },
+    permission: {
+      decide: (id: string, decision: PermissionDecision): Promise<void> =>
+        bridge.call<void>('PermissionDecide', id, decision),
+      onAsk: (cb: (event: PermissionAskEvent) => void): (() => void) =>
+        events.on<PermissionAskEvent>(IPC.permissionAsk, cb),
+      onClosed: (cb: (event: PermissionClosedEvent) => void): (() => void) =>
+        events.on<PermissionClosedEvent>(IPC.permissionClosed, cb)
+    },
     fonts: {
       list: (): Promise<string[]> => bridge.call<string[]>('FontsList')
     },
     app: {
-      getVersion: (): Promise<string> => bridge.call<string>('AppGetVersion')
+      getVersion: (): Promise<string> => bridge.call<string>('AppGetVersion'),
+      openExternal: (url: string): Promise<void> => bridge.call<void>('AppOpenExternal', url)
     },
     mcpRegistration: {
       status: (): Promise<McpRegistrationTargetStatus[]> =>
@@ -183,7 +219,9 @@ export function createApi(bridge: ApiBridge): ElectronApi {
       register: (target: McpRegistrationTarget | 'all'): Promise<McpRegistrationResult[]> =>
         bridge.call<McpRegistrationResult[]>('McpRegistrationRegister', target),
       clipboardSnippet: (): Promise<string> =>
-        bridge.call<string>('McpRegistrationClipboardSnippet')
+        bridge.call<string>('McpRegistrationClipboardSnippet'),
+      manualConfig: (): Promise<McpManualConfig> =>
+        bridge.call<McpManualConfig>('McpRegistrationManualConfig')
     },
     dialog: {
       openPrivateKeyFile: (): Promise<string | null> =>

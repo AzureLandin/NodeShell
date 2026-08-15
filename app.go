@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"nodeshell/internal/agent"
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/configdir"
 	"nodeshell/internal/credentials"
@@ -18,6 +20,7 @@ import (
 	"nodeshell/internal/knownhosts"
 	"nodeshell/internal/mcpregistration"
 	"nodeshell/internal/monitor"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 	"nodeshell/internal/settings"
 	"nodeshell/internal/sftpservice"
@@ -42,6 +45,21 @@ var listFonts = fonts.List
 // home so binding tests never touch the real user's MCP configs.
 var newMcpRegistration = mcpregistration.New
 
+// newAgentKeyBackend is the seam for the assistant's API-key store. It is the
+// same OS keyring the host credentials use, under a fixed account name; tests
+// inject an in-memory backend so no binding test writes to the real keyring.
+var newAgentKeyBackend = func() credentials.Backend { return keyring.NewBackend() }
+
+// agentKeyAccount is the keyring account holding the assistant's API key. It
+// is a fixed name, never a host id, so it can never collide with a host's
+// secret (host accounts are UUIDs).
+const agentKeyAccount = "agent-api-key"
+
+// agentKeyMaxLen bounds an accepted API key. Real keys are far shorter, and
+// the OS keyring rejects large blobs anyway (Windows caps them), so an
+// oversized value is refused before it reaches the backend.
+const agentKeyMaxLen = 4096
+
 // App is the narrow Wails-bound facade. Hosts and settings methods delegate
 // to the domain stores; known-hosts stays an internal service until the SSH
 // task consumes it. Credentials are stored in the OS keyring; sessions,
@@ -64,6 +82,16 @@ type App struct {
 	sessions *sessions.Manager
 	sftp     *sftpservice.Service
 	monitor  *monitor.Service
+	// agent is the sidebar assistant; it runs tools only against sessions
+	// this manager owns, so it can never reach a host the user is not on.
+	agent *agent.Service
+	// agentKeys stores the assistant's API key in the OS keyring, separately
+	// from the per-host credentials store.
+	agentKeys credentials.Backend
+	// perms gates sensitive agent (and, in --mcp, MCP) tool calls. The GUI
+	// uses permGate to wait on the in-app permission modal.
+	perms    *permission.Service
+	permGate *permission.ChannelGate
 	// mcpReg writes the native MCP launcher config into Cursor / Claude Code
 	// / Codex / OpenCode (this executable with --mcp).
 	mcpReg *mcpregistration.Service
@@ -88,11 +116,20 @@ func NewApp() *App {
 // and the SFTP and monitor services ride the same session manager and sink.
 // home is the local-path boundary used by uploads and downloads.
 func NewAppWithServices(dataDir string, h *hosts.Store, s *settings.Store, k *knownhosts.Store, c *credentials.Store, readKey credentials.PrivateKeyReader, home string) *App {
-	app := &App{dataDir: dataDir, hosts: h, settings: s, known: k, creds: c, readKey: readKey, home: home, mcpReg: newMcpRegistration()}
-	sink := &disposeSink{next: &wailsSink{}, sftp: func() *sftpservice.Service { return app.sftp }, monitor: func() *monitor.Service { return app.monitor }}
+	app := &App{dataDir: dataDir, hosts: h, settings: s, known: k, creds: c, readKey: readKey, home: home,
+		mcpReg: newMcpRegistration(), agentKeys: newAgentKeyBackend()}
+	sink := &disposeSink{
+		next:    &wailsSink{},
+		sftp:    func() *sftpservice.Service { return app.sftp },
+		monitor: func() *monitor.Service { return app.monitor },
+		agent:   func() *agent.Service { return app.agent },
+		perms:   func() *permission.Service { return app.perms },
+	}
 	app.wireSessions(h, k, c, readKey, sink)
 	app.sftp = sftpservice.New(sftpservice.Deps{Opener: app.sessions, Sink: sink, Home: home})
 	app.wireMonitor(sink)
+	app.wirePermission(sink)
+	app.wireAgent(sink)
 	return app
 }
 
@@ -123,30 +160,103 @@ func (a *App) wireMonitor(sink sessions.EventSink) {
 	a.monitor = monitor.New(monitor.Deps{Execer: a.sessions, Sink: sink})
 }
 
+// wireAgent builds the sidebar assistant over the same session execer and
+// SFTP service the GUI uses, so its tools are bounded by the limits those
+// services already enforce. Without a session manager there is nothing to
+// operate on, so the agent stays nil and its bindings fail observably. The
+// config loader is resolved per prompt, which is how a key or model changed in
+// settings applies without rebuilding the service.
+func (a *App) wireAgent(sink sessions.EventSink) {
+	if a.sessions == nil || a.sftp == nil {
+		return
+	}
+	a.agent = agent.New(agent.Deps{
+		Execer: a.sessions,
+		Files:  a.sftp,
+		Sink:   sink,
+		Config: a.agentConfig,
+		Auth:   a.perms,
+	})
+}
+
+// wirePermission builds the in-app permission gate over the same Wails sink
+// the agent uses, so a sensitive tool blocks on the renderer modal instead
+// of running immediately. MCP stdio mode never calls this: it has no
+// WebView and uses NativeGate instead.
+func (a *App) wirePermission(sink sessions.EventSink) {
+	gate := permission.NewChannelGate(sink)
+	a.permGate = gate
+	a.perms = permission.NewService(permission.ServiceDeps{
+		Gate:   gate,
+		Policy: a.permissionPolicy,
+	})
+}
+
+func (a *App) permissionPolicy() permission.Policy {
+	a.mu.RLock()
+	s := a.settings
+	a.mu.RUnlock()
+	if s == nil {
+		return permission.PolicyAsk
+	}
+	current, err := s.Get()
+	if err != nil {
+		return permission.PolicyAsk
+	}
+	return permission.ParsePolicy(current.PermissionPolicy)
+}
+
 // disposeSink forwards every event to the next sink and, on session:closed,
-// disposes the session's cached SFTP client and stops its monitor poller — a
-// torn-down SSH session can never leave a stale SFTP channel or a polling
-// goroutine behind. The getters resolve lazily so wiring order (sessions
-// before sftp/monitor) never matters.
+// disposes the session's cached SFTP client, stops its monitor poller and
+// drops its agent conversation — a torn-down SSH session can never leave a
+// stale SFTP channel, a polling goroutine or a running agent loop behind. The
+// getters resolve lazily so wiring order (sessions before sftp/monitor/agent)
+// never matters.
 type disposeSink struct {
 	next    sessions.EventSink
 	sftp    func() *sftpservice.Service
 	monitor func() *monitor.Service
+	agent   func() *agent.Service
+	perms   func() *permission.Service
 }
 
 func (s *disposeSink) Emit(event string, payload any) {
 	if event == sessions.EventSessionClosed {
 		if e, ok := payload.(sessions.ClosedEvent); ok {
-			if svc := s.sftp(); svc != nil {
-				svc.Dispose(e.SessionID)
-			}
-			if m := s.monitor(); m != nil {
-				m.Dispose(e.SessionID)
-			}
+			s.disposeSession(e.SessionID)
 		}
 	}
 	if s.next != nil {
 		s.next.Emit(event, payload)
+	}
+}
+
+// disposeSession releases everything the closed session owned. Each getter is
+// optional, so a sink wired for one service only (unit tests) cannot panic
+// here.
+func (s *disposeSink) disposeSession(sessionID string) {
+	if s.sftp != nil {
+		if svc := s.sftp(); svc != nil {
+			svc.Dispose(sessionID)
+		}
+	}
+	if s.monitor != nil {
+		if m := s.monitor(); m != nil {
+			m.Dispose(sessionID)
+		}
+	}
+	// A closed session's conversation is dropped with it, so a reconnect
+	// never inherits the previous connection's transcript and no agent loop
+	// outlives its SSH session.
+	if s.agent != nil {
+		if ag := s.agent(); ag != nil {
+			ag.Dispose(sessionID)
+		}
+	}
+	if s.perms != nil {
+		if p := s.perms(); p != nil {
+			p.ForgetSession(sessionID)
+		}
 	}
 }
 
@@ -192,6 +302,9 @@ func (a *App) startup(ctx context.Context) {
 	if a.mcpReg == nil {
 		a.mcpReg = newMcpRegistration()
 	}
+	if a.agentKeys == nil {
+		a.agentKeys = newAgentKeyBackend()
+	}
 	if a.hosts != nil && a.settings != nil {
 		return
 	}
@@ -224,23 +337,35 @@ func (a *App) startup(ctx context.Context) {
 	// The runtime context is captured for event emission; a nil context (the
 	// ctx can only come from Wails OnStartup) simply drops events.
 	a.ctx = ctx
-	sink := &disposeSink{next: &wailsSink{ctx: ctx}, sftp: func() *sftpservice.Service { return a.sftp }, monitor: func() *monitor.Service { return a.monitor }}
+	sink := &disposeSink{
+		next:    &wailsSink{ctx: ctx},
+		sftp:    func() *sftpservice.Service { return a.sftp },
+		monitor: func() *monitor.Service { return a.monitor },
+		agent:   func() *agent.Service { return a.agent },
+		perms:   func() *permission.Service { return a.perms },
+	}
 	a.wireSessions(a.hosts, a.known, a.creds, a.readKey, sink)
 	a.sftp = sftpservice.New(sftpservice.Deps{Opener: a.sessions, Sink: sink, Home: home})
 	a.wireMonitor(sink)
+	a.wirePermission(sink)
+	a.wireAgent(sink)
 	a.registerFileDrop(ctx)
 }
 
-// shutdown is the Wails OnShutdown hook: the monitor poller is stopped and
-// joined before the sessions, so no poll is ever mid-exec against a torn-down
-// session and no monitor:update event can be emitted while the WebView tears
+// shutdown is the Wails OnShutdown hook: the agent loops and the monitor
+// poller are stopped before the sessions, so nothing is ever mid-exec against
+// a torn-down session and no event can be emitted while the WebView tears
 // down. Sessions and SFTP clients are then disposed quietly.
 func (a *App) shutdown(context.Context) {
 	a.mu.RLock()
 	m := a.sessions
 	svc := a.sftp
 	mon := a.monitor
+	ag := a.agent
 	a.mu.RUnlock()
+	if ag != nil {
+		ag.DisposeAll()
+	}
 	if mon != nil {
 		mon.DisposeAll()
 	}
@@ -786,6 +911,212 @@ func (a *App) SftpWriteText(sessionID, remotePath, content string) (SftpTextPath
 	return SftpTextPath{Path: resolved}, nil
 }
 
+// --- Agent bindings (ElectronApi.agent contract) ---
+
+// AgentConfigStatus is the AgentStatus/AgentSetConfig payload. The API key is
+// never returned, only whether one is stored, so the renderer can render a
+// configured state without ever holding the secret.
+type AgentConfigStatus struct {
+	Configured bool   `json:"configured"`
+	BaseURL    string `json:"baseUrl"`
+	Model      string `json:"model"`
+}
+
+// AgentConfigPatch mirrors the renderer's setConfig payload; nil fields are
+// left unchanged. An APIKey of "" clears the stored key.
+type AgentConfigPatch struct {
+	BaseURL *string `json:"baseUrl"`
+	Model   *string `json:"model"`
+	APIKey  *string `json:"apiKey"`
+}
+
+// agentKeyBackend returns the keyring backend for the assistant's API key.
+func (a *App) agentKeyBackend() (credentials.Backend, error) {
+	a.mu.RLock()
+	keys := a.agentKeys
+	a.mu.RUnlock()
+	if keys == nil {
+		return nil, errBackendNotInitialised
+	}
+	return keys, nil
+}
+
+// agentAPIKey reads the stored key; a missing entry is an empty key, not an
+// error, so an unconfigured assistant reports "not configured" instead of a
+// keyring failure. The value is returned to callers inside this process only.
+func (a *App) agentAPIKey() (string, error) {
+	keys, err := a.agentKeyBackend()
+	if err != nil {
+		return "", err
+	}
+	value, err := keys.Get(credentials.ServiceName, agentKeyAccount)
+	if err != nil {
+		if errors.Is(err, credentials.ErrNotFound) {
+			return "", nil
+		}
+		return "", &agentKeyError{message: "Failed to read the agent API key"}
+	}
+	return value, nil
+}
+
+// agentKeyError is the coded, secret-free error surfaced for keyring failures
+// on the agent path.
+type agentKeyError struct{ message string }
+
+func (e *agentKeyError) Error() string     { return e.message }
+func (e *agentKeyError) ErrorCode() string { return apperror.Unknown }
+
+// agentConfig is the agent service's ConfigLoader: the non-secret half comes
+// from settings.json, the key from the OS keyring. A missing key is reported
+// as agent.ErrNotConfigured so the prompt is rejected before a request is
+// built.
+func (a *App) agentConfig() (agent.Config, error) {
+	a.mu.RLock()
+	s := a.settings
+	a.mu.RUnlock()
+	if s == nil {
+		return agent.Config{}, errBackendNotInitialised
+	}
+	current, err := s.Get()
+	if err != nil {
+		return agent.Config{}, err
+	}
+	key, err := a.agentAPIKey()
+	if err != nil {
+		return agent.Config{}, err
+	}
+	if key == "" {
+		return agent.Config{}, agent.ErrNotConfigured
+	}
+	return agent.Config{BaseURL: current.AgentBaseURL, Model: current.AgentModel, APIKey: key}, nil
+}
+
+// AgentStatus reports the assistant's endpoint and whether an API key is
+// stored (adapter agent.status).
+func (a *App) AgentStatus() (AgentConfigStatus, error) {
+	a.mu.RLock()
+	s := a.settings
+	a.mu.RUnlock()
+	if s == nil {
+		return AgentConfigStatus{}, errBackendNotInitialised
+	}
+	current, err := s.Get()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	key, err := a.agentAPIKey()
+	if err != nil {
+		return AgentConfigStatus{}, err
+	}
+	return AgentConfigStatus{
+		Configured: key != "",
+		BaseURL:    current.AgentBaseURL,
+		Model:      current.AgentModel,
+	}, nil
+}
+
+// AgentSetConfig persists the endpoint fields in settings.json and the API key
+// in the OS keyring, then returns the resulting status. The key is written
+// only to the keyring — never to settings.json, an event or a log — and an
+// empty key clears the stored entry.
+func (a *App) AgentSetConfig(patch AgentConfigPatch) (AgentConfigStatus, error) {
+	a.mu.RLock()
+	s := a.settings
+	a.mu.RUnlock()
+	if s == nil {
+		return AgentConfigStatus{}, errBackendNotInitialised
+	}
+	if patch.APIKey != nil {
+		keys, err := a.agentKeyBackend()
+		if err != nil {
+			return AgentConfigStatus{}, err
+		}
+		key := strings.TrimSpace(*patch.APIKey)
+		if len(key) > agentKeyMaxLen {
+			return AgentConfigStatus{}, &agentKeyError{message: "The agent API key is too long"}
+		}
+		if key == "" {
+			if err := keys.Delete(credentials.ServiceName, agentKeyAccount); err != nil &&
+				!errors.Is(err, credentials.ErrNotFound) {
+				return AgentConfigStatus{}, &agentKeyError{message: "Failed to clear the agent API key"}
+			}
+		} else if err := keys.Set(credentials.ServiceName, agentKeyAccount, key); err != nil {
+			return AgentConfigStatus{}, &agentKeyError{message: "Failed to store the agent API key"}
+		}
+	}
+	if patch.BaseURL != nil || patch.Model != nil {
+		if _, err := s.Set(settings.Patch{AgentBaseURL: patch.BaseURL, AgentModel: patch.Model}); err != nil {
+			return AgentConfigStatus{}, err
+		}
+	}
+	return a.AgentStatus()
+}
+
+// agentService returns the wired assistant.
+func (a *App) agentService() (*agent.Service, error) {
+	a.mu.RLock()
+	svc := a.agent
+	a.mu.RUnlock()
+	if svc == nil {
+		return nil, errBackendNotInitialised
+	}
+	return svc, nil
+}
+
+// AgentPrompt accepts one message for the session's conversation. It returns
+// an error only when the prompt is rejected up front (not configured, empty,
+// a run already in flight); an accepted run reports progress through the
+// agent:delta/tool/error events and is always closed by agent:done. title is
+// the session's tab label, so the assistant names the host the way the UI
+// does.
+func (a *App) AgentPrompt(sessionID, title, text string) error {
+	svc, err := a.agentService()
+	if err != nil {
+		return err
+	}
+	return svc.Prompt(sessionID, title, text)
+}
+
+// AgentAbort stops the session's in-flight run; the run still closes with an
+// agent:done event marked aborted.
+func (a *App) AgentAbort(sessionID string) error {
+	svc, err := a.agentService()
+	if err != nil {
+		return err
+	}
+	svc.Abort(sessionID)
+	return nil
+}
+
+// AgentClear stops the in-flight run and drops the session's conversation, so
+// the next prompt starts fresh.
+func (a *App) AgentClear(sessionID string) error {
+	svc, err := a.agentService()
+	if err != nil {
+		return err
+	}
+	svc.Clear(sessionID)
+	return nil
+}
+
+// PermissionDecide answers an in-app permission:ask. Unknown ids are ignored
+// (already cancelled). The renderer is the only caller; MCP uses a native
+// dialog in its own process and never hits this binding.
+func (a *App) PermissionDecide(id, decision string) error {
+	a.mu.RLock()
+	gate := a.permGate
+	a.mu.RUnlock()
+	if gate == nil {
+		return errBackendNotInitialised
+	}
+	d, ok := permission.ParseDecision(decision)
+	if !ok {
+		return &permission.Error{Code: apperror.Unknown, Message: "Unknown permission decision"}
+	}
+	gate.Decide(id, d)
+	return nil
+}
+
 // DialogOpenPrivateKeyFile opens the private-key picker. The returned path is
 // raw; the home-boundary constraint is enforced later by the credential
 // reader when the save payload is processed.
@@ -860,7 +1191,8 @@ func (a *App) McpRegistrationRegister(target string) ([]mcpregistration.Result, 
 
 // McpRegistrationClipboardSnippet returns a JSON mcpServers block for manual
 // configuration, built from the native spec (adapter
-// mcpRegistration.clipboardSnippet).
+// mcpRegistration.clipboardSnippet). Equivalent to the standard snippet from
+// McpRegistrationManualConfig.
 func (a *App) McpRegistrationClipboardSnippet() (string, error) {
 	a.mu.RLock()
 	svc := a.mcpReg
@@ -869,4 +1201,16 @@ func (a *App) McpRegistrationClipboardSnippet() (string, error) {
 		return "", errBackendNotInitialised
 	}
 	return svc.ClipboardSnippet()
+}
+
+// McpRegistrationManualConfig returns the native launch spec and paste-ready
+// snippets for other MCP clients (adapter mcpRegistration.manualConfig).
+func (a *App) McpRegistrationManualConfig() (mcpregistration.ManualConfig, error) {
+	a.mu.RLock()
+	svc := a.mcpReg
+	a.mu.RUnlock()
+	if svc == nil {
+		return mcpregistration.ManualConfig{}, errBackendNotInitialised
+	}
+	return svc.ManualConfig()
 }

@@ -12,6 +12,7 @@ import (
 
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/credentials"
+	"nodeshell/internal/permission"
 	"nodeshell/internal/sessions"
 )
 
@@ -70,13 +71,14 @@ func TestRunMCPCtxCancelShutsDown(t *testing.T) {
 		t.Fatalf("write hosts fixture: %v", err)
 	}
 
-	oldDir, oldHome, oldCreds, oldMgr := resolveDataDir, userHomeDir, newCredentials, newSessionManager
+	oldDir, oldHome, oldCreds, oldMgr, oldGate := resolveDataDir, userHomeDir, newCredentials, newSessionManager, newPermissionGate
 	t.Cleanup(func() {
-		resolveDataDir, userHomeDir, newCredentials, newSessionManager = oldDir, oldHome, oldCreds, oldMgr
+		resolveDataDir, userHomeDir, newCredentials, newSessionManager, newPermissionGate = oldDir, oldHome, oldCreds, oldMgr, oldGate
 	})
 	resolveDataDir = func() (string, error) { return dir, nil }
 	userHomeDir = func() (string, error) { return t.TempDir(), nil }
 	newCredentials = func() *credentials.Store { return credentials.New(nopCredBackend{}) }
+	newPermissionGate = func() permission.Gate { return permission.AllowGate{} }
 
 	m := newFakeManager()
 	m.connectStart = make(chan struct{}, 1)
