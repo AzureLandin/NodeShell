@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faChartLine, faNetworkWired } from '@fortawesome/free-solid-svg-icons'
 import type { MonitorSnapshot } from '../../../shared/types'
 import { TunnelPanel } from './TunnelPanel'
 
@@ -377,7 +379,8 @@ export function SidebarPanel({
           className={tab === 'monitor' ? 'is-active' : undefined}
           onClick={() => setTab('monitor')}
         >
-          {t('monitor.title')}
+          <FontAwesomeIcon icon={faChartLine} className="sidebar-tab-icon" aria-hidden="true" />
+          <span>{t('monitor.title')}</span>
         </button>
         <button
           type="button"
@@ -386,7 +389,8 @@ export function SidebarPanel({
           className={tab === 'ports' ? 'is-active' : undefined}
           onClick={() => setTab('ports')}
         >
-          {t('tunnels.title')}
+          <FontAwesomeIcon icon={faNetworkWired} className="sidebar-tab-icon" aria-hidden="true" />
+          <span>{t('tunnels.title')}</span>
         </button>
       </div>
       <div

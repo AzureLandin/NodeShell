@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 	"sync"
 
@@ -86,6 +87,7 @@ type App struct {
 	readKey  credentials.PrivateKeyReader
 	sessions *sessions.Manager
 	sftp     *sftpservice.Service
+	transfer *sftpservice.TransferManager
 	monitor  *monitor.Service
 	tunnels  *tunnel.Service
 	// agent is the sidebar assistant; it runs tools only against sessions
@@ -134,6 +136,7 @@ func NewAppWithServices(dataDir string, h *hosts.Store, s *settings.Store, k *kn
 	}
 	app.wireSessions(h, k, c, readKey, sink)
 	app.sftp = sftpservice.New(sftpservice.Deps{Opener: app.sessions, Sink: sink, Home: home})
+	app.transfer = sftpservice.NewTransferManager(sftpservice.TransferManagerDeps{SFTP: app.sftp, Sink: sink, Home: home})
 	app.wireMonitor(sink)
 	app.wireTunnels()
 	app.wirePermission(sink)
@@ -296,28 +299,6 @@ func (s *disposeSink) disposeSession(sessionID string) {
 	}
 }
 
-// filesOnDropEvent carries absolute dropped file paths to the frontend
-// adapter (payload {"paths": [...]}); the SftpPanel associates them with its
-// current session.
-const filesOnDropEvent = "files:onDrop"
-
-// registerFileDrop hooks the Wails file-drop callback so dropped files reach
-// the frontend as events. Registration is skipped when ctx does not carry a
-// Wails runtime (unit tests call startup with a plain context, where
-// runtime.OnFileDrop would fatal-exit); the value check mirrors the one
-// runtime itself performs.
-func (a *App) registerFileDrop(ctx context.Context) {
-	if ctx == nil || ctx.Value("events") == nil {
-		return
-	}
-	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
-		if len(paths) == 0 {
-			return
-		}
-		runtime.EventsEmit(ctx, filesOnDropEvent, map[string]any{"paths": paths})
-	})
-}
-
 // boolPtr returns a pointer to b, for hosts.Patch flag fields.
 func boolPtr(b bool) *bool { return &b }
 
@@ -383,11 +364,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.wireSessions(a.hosts, a.known, a.creds, a.readKey, sink)
 	a.sftp = sftpservice.New(sftpservice.Deps{Opener: a.sessions, Sink: sink, Home: home})
+	a.transfer = sftpservice.NewTransferManager(sftpservice.TransferManagerDeps{SFTP: a.sftp, Sink: sink, Home: home})
 	a.wireMonitor(sink)
 	a.wireTunnels()
 	a.wirePermission(sink)
 	a.wireAgent(sink)
-	a.registerFileDrop(ctx)
 }
 
 // shutdown is the Wails OnShutdown hook: the agent loops and the monitor
@@ -398,12 +379,16 @@ func (a *App) shutdown(context.Context) {
 	a.mu.RLock()
 	m := a.sessions
 	svc := a.sftp
+	tm := a.transfer
 	mon := a.monitor
 	tun := a.tunnels
 	ag := a.agent
 	a.mu.RUnlock()
 	if ag != nil {
 		ag.DisposeAll()
+	}
+	if tm != nil {
+		tm.Dispose()
 	}
 	if mon != nil {
 		mon.DisposeAll()
@@ -1593,4 +1578,155 @@ func (a *App) McpRegistrationManualConfig() (mcpregistration.ManualConfig, error
 		return mcpregistration.ManualConfig{}, errBackendNotInitialised
 	}
 	return svc.ManualConfig()
+}
+
+// --- Transfer Manager bindings (ElectronApi.transfer contract) ---
+
+func (a *App) transferManager() (*sftpservice.TransferManager, error) {
+	a.mu.RLock()
+	tm := a.transfer
+	a.mu.RUnlock()
+	if tm == nil {
+		return nil, errBackendNotInitialised
+	}
+	return tm, nil
+}
+
+// TransferGetTasks returns a snapshot of all active and recent transfer tasks.
+func (a *App) TransferGetTasks() ([]sftpservice.TransferTaskDTO, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return nil, err
+	}
+	return tm.GetTasks(), nil
+}
+
+// TransferEnqueueUpload enqueues local file paths for upload into remoteDir.
+func (a *App) TransferEnqueueUpload(sessionID, remoteDir string, localPaths []string) ([]string, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return nil, err
+	}
+	title := a.resolveSessionTitle(sessionID)
+	return tm.EnqueueUpload(sessionID, title, remoteDir, localPaths)
+}
+
+// TransferEnqueueDownload enqueues a single file download from remotePath to localPath.
+func (a *App) TransferEnqueueDownload(sessionID, remotePath, localPath string) (string, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return "", err
+	}
+	absRemote := a.resolveAbsoluteRemotePath(sessionID, remotePath)
+	title := a.resolveSessionTitle(sessionID)
+	return tm.EnqueueDownload(sessionID, title, absRemote, localPath)
+}
+
+// TransferChooseUploadFiles opens the file chooser dialog and enqueues selected files.
+func (a *App) TransferChooseUploadFiles(sessionID, remoteDir string) ([]string, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return nil, err
+	}
+	ctx, err := a.dialogCtx()
+	if err != nil {
+		return nil, err
+	}
+	paths, err := openUploadDialog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, nil // cancelled by user
+	}
+	title := a.resolveSessionTitle(sessionID)
+	return tm.EnqueueUpload(sessionID, title, remoteDir, paths)
+}
+
+// TransferChooseDownloadTarget opens the save file dialog and enqueues the download.
+func (a *App) TransferChooseDownloadTarget(sessionID, remotePath, defaultName string) (string, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return "", err
+	}
+	ctx, err := a.dialogCtx()
+	if err != nil {
+		return "", err
+	}
+	target, err := openSaveDialog(ctx, defaultName)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		return "", nil // cancelled by user
+	}
+	absRemote := a.resolveAbsoluteRemotePath(sessionID, remotePath)
+	title := a.resolveSessionTitle(sessionID)
+	return tm.EnqueueDownload(sessionID, title, absRemote, target)
+}
+
+func (a *App) resolveAbsoluteRemotePath(sessionID, remotePath string) string {
+	if strings.HasPrefix(remotePath, "/") {
+		return path.Clean(remotePath)
+	}
+	a.mu.RLock()
+	sftpSvc := a.sftp
+	a.mu.RUnlock()
+	if sftpSvc != nil {
+		if cwd, err := sftpSvc.Cwd(sessionID); err == nil && cwd != "" {
+			return sftpservice.JoinRemote(cwd, remotePath)
+		}
+	}
+	return path.Clean("/" + remotePath)
+}
+
+// TransferCancel cancels a queued or running transfer task.
+func (a *App) TransferCancel(taskID string) error {
+	tm, err := a.transferManager()
+	if err != nil {
+		return err
+	}
+	return tm.Cancel(taskID)
+}
+
+// TransferRetry retries a failed or cancelled transfer task.
+func (a *App) TransferRetry(taskID string) (string, error) {
+	tm, err := a.transferManager()
+	if err != nil {
+		return "", err
+	}
+	return tm.Retry(taskID)
+}
+
+// TransferClear removes a finished task from history.
+func (a *App) TransferClear(taskID string) error {
+	tm, err := a.transferManager()
+	if err != nil {
+		return err
+	}
+	return tm.Clear(taskID)
+}
+
+// TransferClearCompleted removes all completed, cancelled, or failed tasks.
+func (a *App) TransferClearCompleted() error {
+	tm, err := a.transferManager()
+	if err != nil {
+		return err
+	}
+	return tm.ClearCompleted()
+}
+
+func (a *App) resolveSessionTitle(sessionID string) string {
+	a.mu.RLock()
+	sessMgr := a.sessions
+	hostStore := a.hosts
+	a.mu.RUnlock()
+	if sessMgr != nil && hostStore != nil {
+		if hID, ok := sessMgr.HostID(sessionID); ok {
+			if h, ok, _ := hostStore.GetByID(hID); ok && h.Name != "" {
+				return h.Name
+			}
+		}
+	}
+	return sessionID
 }

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import type { AuthMethod, HostInput } from '../../../shared/types'
 import { PasswordField } from './PasswordField'
 import { Select } from './Select'
@@ -82,118 +84,143 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
 
   return (
     <form className="host-form" onSubmit={(e) => void handleSubmit(e)} noValidate>
-      <h3 className="host-form-title">{isEdit ? t('form.editTitle') : t('form.newTitle')}</h3>
-
-      <label className="form-field">
-        <span>{t('form.name')}</span>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-          autoFocus
-          disabled={submitting}
-        />
-      </label>
-
-      <label className="form-field">
-        <span>{t('form.host')}</span>
-        <input
-          type="text"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          required
-          placeholder="example.com"
-          disabled={submitting}
-        />
-      </label>
-
-      <label className="form-field">
-        <span>{t('form.port')}</span>
-        <input
-          type="number"
-          value={port}
-          onChange={(e) => setPort(e.target.value)}
-          required
-          min={1}
-          max={65535}
-          disabled={submitting}
-        />
-      </label>
-
-      <label className="form-field">
-        <span>{t('form.username')}</span>
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          required
-          disabled={submitting}
-        />
-      </label>
-
-      <div className="form-field">
-        <span>{t('form.auth')}</span>
-        <Select
-          value={authMethod}
-          onChange={(v) => {
-            setAuthMethod(v as AuthMethod)
-            setFormError(null)
-          }}
-          aria-label={t('form.auth')}
-          options={[
-            { value: 'password', label: t('form.password') },
-            { value: 'privateKey', label: t('form.privateKey') }
-          ]}
-        />
+      <div className="host-form-header">
+        <h3 className="host-form-title">{isEdit ? t('form.editTitle') : t('form.newTitle')}</h3>
       </div>
 
-      {authMethod === 'password' && (
-        <PasswordField
-          label={t('form.password')}
-          value={password}
-          onChange={(next) => {
-            setPassword(next)
-            setFormError(null)
-          }}
-          required={!isEdit}
-          disabled={submitting}
-          placeholder={isEdit ? t('form.passwordLeaveBlank') : undefined}
-          aria-invalid={Boolean(formError)}
-          autoComplete="new-password"
-        />
-      )}
-
-      {authMethod === 'privateKey' && (
-        <label className="form-field">
-          <span>{t('form.privateKeyPath')}</span>
-          <div className="form-field-row">
+      <div className="host-form-body">
+        <div className="form-section">
+          <h4 className="form-section-title">{t('hostsPicker.basicInfo')}</h4>
+          <label className="form-field">
+            <span>{t('form.name')}</span>
             <input
               type="text"
-              value={privateKeyPath}
-              onChange={(e) => {
-                setPrivateKeyPath(e.target.value)
-                setFormError(null)
-              }}
-              placeholder="/path/to/key"
-              required={!isEdit}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              autoFocus
               disabled={submitting}
             />
-            <button type="button" onClick={() => void handleBrowse()} disabled={submitting}>
-              {t('form.browse')}
-            </button>
+          </label>
+
+          <div className="form-grid-2col">
+            <label className="form-field form-field-host">
+              <span>{t('form.host')}</span>
+              <input
+                type="text"
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                required
+                placeholder="example.com"
+                disabled={submitting}
+              />
+            </label>
+
+            <label className="form-field form-field-port">
+              <span>{t('form.port')}</span>
+              <input
+                type="number"
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                required
+                min={1}
+                max={65535}
+                disabled={submitting}
+              />
+            </label>
           </div>
-        </label>
-      )}
 
-      {formError && (
-        <p className="form-inline-error" role="alert">
-          {formError}
-        </p>
-      )}
+          <label className="form-field">
+            <span>{t('form.username')}</span>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              disabled={submitting}
+            />
+          </label>
+        </div>
 
-      <div className="form-actions">
-        <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>
+        <div className="form-section">
+          <h4 className="form-section-title">{t('hostsPicker.authConfig')}</h4>
+          <div className="form-field">
+            <span>{t('form.auth')}</span>
+            <Select
+              value={authMethod}
+              onChange={(v) => {
+                setAuthMethod(v as AuthMethod)
+                setFormError(null)
+              }}
+              aria-label={t('form.auth')}
+              options={[
+                { value: 'password', label: t('form.password') },
+                { value: 'privateKey', label: t('form.privateKey') }
+              ]}
+            />
+          </div>
+
+          {authMethod === 'password' && (
+            <PasswordField
+              label={t('form.password')}
+              value={password}
+              onChange={(next) => {
+                setPassword(next)
+                setFormError(null)
+              }}
+              required={!isEdit}
+              disabled={submitting}
+              placeholder={isEdit ? t('form.passwordLeaveBlank') : undefined}
+              aria-invalid={Boolean(formError)}
+              autoComplete="new-password"
+            />
+          )}
+
+          {authMethod === 'privateKey' && (
+            <label className="form-field">
+              <span>{t('form.privateKeyPath')}</span>
+              <div className="form-field-row">
+                <input
+                  type="text"
+                  value={privateKeyPath}
+                  onChange={(e) => {
+                    setPrivateKeyPath(e.target.value)
+                    setFormError(null)
+                  }}
+                  placeholder="/path/to/key"
+                  required={!isEdit}
+                  disabled={submitting}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void handleBrowse()}
+                  disabled={submitting}
+                  title={t('form.browse')}
+                  aria-label={t('form.browse')}
+                >
+                  <FontAwesomeIcon icon={faFolderOpen} aria-hidden="true" />
+                  <span>{t('form.browse')}</span>
+                </button>
+              </div>
+            </label>
+          )}
+        </div>
+
+        {formError && (
+          <p className="form-inline-error" role="alert">
+            {formError}
+          </p>
+        )}
+      </div>
+
+      <div className="host-form-actions-bar">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={onCancel}
+          disabled={submitting}
+        >
           {t('form.cancel')}
         </button>
         <button type="submit" className="btn-primary" disabled={submitting}>

@@ -583,7 +583,17 @@ func TestConnectConnectionRefused(t *testing.T) {
 
 func TestConnectHostNotFound(t *testing.T) {
 	keys := newMemoryHostKeys()
-	opts := Options{Host: "does-not-exist.invalid", Port: 22, Username: "u", AuthMethod: "password", HostKeys: keys, Deadline: 5 * time.Second}
+	opts := Options{
+		Host:       "does-not-exist.invalid",
+		Port:       22,
+		Username:   "u",
+		AuthMethod: "password",
+		HostKeys:   keys,
+		Deadline:   5 * time.Second,
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return nil, &net.DNSError{Name: "does-not-exist.invalid", Err: "no such host", IsNotFound: true}
+		},
+	}
 	_, err := Connect(context.Background(), opts)
 	assertErrorCode(t, err, apperror.HostNotFound)
 }

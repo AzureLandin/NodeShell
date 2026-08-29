@@ -23,6 +23,7 @@ import {
   type SessionDataEvent,
   type SessionErrorEvent,
   type SftpTransferProgressEvent,
+  type TransferTask,
   type Tunnel,
   type TunnelListener
 } from '../../../shared/types'
@@ -168,14 +169,35 @@ export function createApi(bridge: ApiBridge): ElectronApi {
       onTransferProgress: (cb: (event: SftpTransferProgressEvent) => void): (() => void) =>
         events.on<SftpTransferProgressEvent>(IPC.sftpTransferProgress, cb)
     },
+    transfer: {
+      getTasks: (): Promise<TransferTask[]> => bridge.call<TransferTask[]>('TransferGetTasks'),
+      enqueueUpload: (sessionId: string, remoteDir: string, localPaths: string[]): Promise<string[]> =>
+        bridge.call<string[]>('TransferEnqueueUpload', sessionId, remoteDir, localPaths),
+      enqueueDownload: (sessionId: string, remotePath: string, localPath: string): Promise<string> =>
+        bridge.call<string>('TransferEnqueueDownload', sessionId, remotePath, localPath),
+      chooseUploadFiles: (sessionId: string, remoteDir: string): Promise<string[]> =>
+        bridge.call<string[]>('TransferChooseUploadFiles', sessionId, remoteDir),
+      chooseDownloadTarget: (sessionId: string, remotePath: string, defaultName: string): Promise<string> =>
+        bridge.call<string>('TransferChooseDownloadTarget', sessionId, remotePath, defaultName),
+      cancel: (taskId: string): Promise<void> => bridge.call<void>('TransferCancel', taskId),
+      retry: (taskId: string): Promise<string> => bridge.call<string>('TransferRetry', taskId),
+      clear: (taskId: string): Promise<void> => bridge.call<void>('TransferClear', taskId),
+      clearCompleted: (): Promise<void> => bridge.call<void>('TransferClearCompleted'),
+      onTask: (cb: (task: TransferTask) => void): (() => void) =>
+        events.on<TransferTask>(IPC.transferTask, cb)
+    },
     files: {
       getPathForFile: (file: File): string => bridge.getPathForFile(file),
-      // Native file drops (Wails OnFileDrop) arrive as an event carrying the
-      // absolute paths; the SftpPanel associates them with its current
-      // session. Only the Wails adapter exposes this — the Electron preload
-      // keeps the DOM drop path.
-      onDrop: (cb: (paths: string[]) => void): (() => void) =>
-        events.on<{ paths: string[] }>(IPC.filesOnDrop, (payload) => cb(payload.paths))
+      // Native file drops: delegates to Wails window.runtime.OnFileDrop via the bridge.
+      // SftpPanel subscribes when present; otherwise it falls back to DOM File.path.
+      ...(typeof bridge.onFileDrop === 'function'
+        ? {
+            onDrop: (cb: (paths: string[]) => void): (() => void) => {
+              const unsub = bridge.onFileDrop?.(cb)
+              return unsub ?? (() => undefined)
+            }
+          }
+        : {})
     },
     monitor: {
       setActive: (sessionId: string | null, title?: string): Promise<void> =>

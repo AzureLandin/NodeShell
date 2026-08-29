@@ -86,7 +86,7 @@ describe('SftpPanel text editing', () => {
       expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', 'readme.md')
     )
     expect(await screen.findByDisplayValue('hello')).toBeInTheDocument()
-    expect(fake.mocks.sftp.download).not.toHaveBeenCalled()
+    expect(fake.mocks.transfer.chooseDownloadTarget).not.toHaveBeenCalled()
     expect(document.body.querySelector('.sftp-editor-modal')).not.toBeNull()
     expect(document.querySelector('.sftp-panel .sftp-editor-modal')).toBeNull()
   })
@@ -97,7 +97,7 @@ describe('SftpPanel text editing', () => {
     fireEvent.doubleClick(screen.getByText('photo.png'))
 
     await waitFor(() =>
-      expect(fake.mocks.sftp.download).toHaveBeenCalledWith('s1', 'photo.png', 'photo.png')
+      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith('s1', '/home/user/photo.png', 'photo.png')
     )
     expect(fake.mocks.sftp.readText).not.toHaveBeenCalled()
   })

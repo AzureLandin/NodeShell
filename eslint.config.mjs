@@ -111,7 +111,7 @@ export default defineConfig(
       // the ModalShell component (context consumer pattern).
       'react-refresh/only-export-components': [
         'error',
-        { allowConstantExport: true, allowExportNames: ['useModalClose'] }
+        { allowConstantExport: true, allowExportNames: ['useModalClose', 'safeHttpUrl'] }
       ]
     }
   },

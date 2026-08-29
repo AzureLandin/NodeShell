@@ -95,11 +95,10 @@ func runGUI() int {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		// EnableFileDrop delivers absolute paths of dropped files to
-		// runtime.OnFileDrop (registered in App.startup), which forwards them
-		// to the frontend as files:onDrop events; the SftpPanel uploads them
-		// into its current session. DisableWebViewDrop stays false so the
-		// WebView's own drop handling (and the DOM drag visuals) keep
+		// EnableFileDrop allows Wails to resolve absolute paths of dropped files
+		// when the frontend registers window.runtime.OnFileDrop. The SftpPanel
+		// uploads them into its current session. DisableWebViewDrop stays false
+		// so the WebView's own drop handling (and the DOM drag visuals) keep
 		// working.
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop:     true,

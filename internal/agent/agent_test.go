@@ -850,9 +850,98 @@ func TestDisposeAllJoinsInFlightRun(t *testing.T) {
 	}
 }
 
-// The turn limit is observable: a model that keeps calling tools forever ends
-// with an error event rather than spinning.
-func TestTurnLimitEndsWithError(t *testing.T) {
+type hookAuthorizer struct {
+	onAuth func()
+}
+
+func (h *hookAuthorizer) Authorize(ctx context.Context, req permission.Request) error {
+	if h.onAuth != nil {
+		h.onAuth()
+	}
+	return nil
+}
+
+// A default run (MaxTurns = 0) can execute more than 8 sequential tool turns
+// without hitting any step-limit error and finishes successfully when the model
+// returns a final answer.
+func TestDefaultRunCanExceedEightToolTurnsAndFinish(t *testing.T) {
+	const totalToolTurns = 12
+	turns := make([]sseTurn, totalToolTurns+1)
+	for i := 0; i < totalToolTurns; i++ {
+		turns[i] = sseTurn{calls: tool(toolBash, fmt.Sprintf(`{"command":"echo step %d"}`, i+1))}
+	}
+	turns[totalToolTurns] = sseTurn{deltas: []string{"all 12 steps completed successfully"}}
+
+	h := newHarness(t, turns, nil) // Deps.MaxTurns defaults to 0 (unlimited)
+	if err := h.prompt("s1", "host", "run 12-step task"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	h.waitDone(t, 1)
+
+	calls := h.tools.recorded()
+	if len(calls) != totalToolTurns {
+		t.Fatalf("exec calls = %d, want %d", len(calls), totalToolTurns)
+	}
+	if got := h.sink.text(); got != "all 12 steps completed successfully" {
+		t.Fatalf("streamed text = %q, want final answer", got)
+	}
+	if errs := h.sink.errors(); len(errs) != 0 {
+		t.Fatalf("unexpected error events: %+v", errs)
+	}
+	done := h.sink.done()
+	if len(done) != 1 {
+		t.Fatalf("done count = %d, want 1", len(done))
+	}
+	if done[0].Aborted {
+		t.Fatal("successful run must not report aborted")
+	}
+}
+
+// An unlimited run executing beyond 8 turns can be aborted cleanly at any turn.
+func TestUnlimitedRunCanAbortAfterEightTurns(t *testing.T) {
+	const totalTurns = 15
+	turns := make([]sseTurn, totalTurns)
+	for i := range turns {
+		turns[i] = sseTurn{calls: tool(toolBash, fmt.Sprintf(`{"command":"echo step %d"}`, i+1))}
+	}
+
+	var h *harness
+	var once sync.Once
+	h = newHarness(t, turns, nil)
+	h.tools.auth = &hookAuthorizer{
+		onAuth: func() {
+			if len(h.tools.recorded()) == 10 {
+				once.Do(func() {
+					h.svc.Abort("s1")
+				})
+			}
+		},
+	}
+
+	if err := h.prompt("s1", "host", "run forever"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	h.waitDone(t, 1)
+
+	calls := h.tools.recorded()
+	if len(calls) < 10 {
+		t.Fatalf("exec calls = %d, want at least 10 before abort", len(calls))
+	}
+	if errs := h.sink.errors(); len(errs) != 0 {
+		t.Fatalf("unexpected error events: %+v", errs)
+	}
+	done := h.sink.done()
+	if len(done) != 1 {
+		t.Fatalf("done count = %d, want 1", len(done))
+	}
+	if !done[0].Aborted {
+		t.Fatal("aborted run must report aborted = true")
+	}
+}
+
+// An explicit turn limit (MaxTurns > 0) is observable: a model that keeps
+// calling tools ends with an error event rather than spinning indefinitely.
+func TestExplicitTurnLimitEndsWithError(t *testing.T) {
 	turns := make([]sseTurn, 6)
 	for i := range turns {
 		turns[i] = sseTurn{calls: tool(toolBash, `{"command":"echo loop"}`)}

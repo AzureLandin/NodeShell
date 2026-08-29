@@ -14,7 +14,8 @@ import type {
   PermissionClosedEvent,
   SessionClosedEvent,
   SessionDataEvent,
-  SessionErrorEvent
+  SessionErrorEvent,
+  TransferTask
 } from '../../src/shared/types'
 import en from '../../src/renderer/src/i18n/locales/en.json'
 
@@ -66,6 +67,7 @@ export interface ApiMocks {
   settings: MockGroup<ElectronApi['settings']>
   credentials: MockGroup<ElectronApi['credentials']>
   sftp: MockGroup<ElectronApi['sftp']>
+  transfer: MockGroup<ElectronApi['transfer']>
   files: MockGroup<ElectronApi['files']>
   monitor: MockGroup<ElectronApi['monitor']>
   tunnels: MockGroup<ElectronApi['tunnels']>
@@ -114,6 +116,18 @@ export function createFakeApi(): FakeApi {
       writeText: vi.fn(),
       onTransferProgress: vi.fn(() => vi.fn())
     },
+    transfer: {
+      getTasks: vi.fn(),
+      enqueueUpload: vi.fn(),
+      enqueueDownload: vi.fn(),
+      chooseUploadFiles: vi.fn(),
+      chooseDownloadTarget: vi.fn(),
+      cancel: vi.fn(),
+      retry: vi.fn(),
+      clear: vi.fn(),
+      clearCompleted: vi.fn(),
+      onTask: vi.fn(() => vi.fn())
+    },
     files: {
       getPathForFile: vi.fn(),
       onDrop: vi.fn(() => vi.fn())
@@ -156,6 +170,7 @@ export function createFakeApi(): FakeApi {
     settings: mocks.settings,
     credentials: mocks.credentials,
     sftp: mocks.sftp,
+    transfer: mocks.transfer,
     files: mocks.files,
     monitor: mocks.monitor,
     tunnels: mocks.tunnels,
@@ -201,8 +216,23 @@ export function installFakeApi(): FakeApi {
     remotePort: 8080
   })
   fake.mocks.tunnels.stop.mockResolvedValue(undefined)
+  fake.mocks.transfer.getTasks.mockResolvedValue([])
+  fake.mocks.transfer.enqueueUpload.mockResolvedValue([])
+  fake.mocks.transfer.enqueueDownload.mockResolvedValue('task-1')
+  fake.mocks.transfer.chooseUploadFiles.mockResolvedValue([])
+  fake.mocks.transfer.chooseDownloadTarget.mockResolvedValue('task-1')
+  fake.mocks.transfer.cancel.mockResolvedValue(undefined)
+  fake.mocks.transfer.retry.mockResolvedValue('task-2')
+  fake.mocks.transfer.clear.mockResolvedValue(undefined)
+  fake.mocks.transfer.clearCompleted.mockResolvedValue(undefined)
   ;(window as Window & { api: unknown }).api = fake.api
   return fake
+}
+
+export function emitTransferEvent(fake: FakeApi, payload: TransferTask): void {
+  const cb = fake.mocks.transfer.onTask.mock.calls[0]?.[0] as ((p: TransferTask) => void) | undefined
+  if (!cb) throw new Error('emitTransferEvent: onTask never subscribed')
+  cb(payload)
 }
 
 type SessionEventKind = 'data' | 'closed' | 'error'

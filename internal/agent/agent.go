@@ -33,13 +33,9 @@ const (
 	EventError = "agent:error"
 )
 
-// Loop and payload limits. They bound both what one run may cost and what one
-// run may put back into the transcript, so a talkative model can neither spin
-// forever nor grow the request without end.
+// Loop and payload limits. They bound what one run may put back into the
+// transcript, so a talkative model cannot grow the request without end.
 const (
-	// DefaultMaxTurns is the number of assistant turns (LLM calls) one prompt
-	// may consume before the run is stopped with an observable error.
-	DefaultMaxTurns = 8
 	// DefaultExecTimeout bounds one bash tool call.
 	DefaultExecTimeout = 60 * time.Second
 	// DefaultRequestTimeout bounds one streamed LLM request.
@@ -135,8 +131,9 @@ type ErrorEvent struct {
 	Error     AppError `json:"error"`
 }
 
-// Deps wires a Service. Zero timeouts and turn counts fall back to the
-// package defaults; tests inject shorter ones.
+// Deps wires a Service. MaxTurns > 0 sets an explicit assistant turn limit
+// (used in tests); zero (the default) means unlimited turns. Zero timeouts
+// fall back to the package defaults.
 type Deps struct {
 	Tools          ToolCaller
 	Sink           EventSink
@@ -188,8 +185,8 @@ func New(d Deps) *Service {
 		// so a long stream is not cut off mid-answer.
 		d.Client = &http.Client{}
 	}
-	if d.MaxTurns <= 0 {
-		d.MaxTurns = DefaultMaxTurns
+	if d.MaxTurns < 0 {
+		d.MaxTurns = 0
 	}
 	if d.ExecTimeout <= 0 {
 		d.ExecTimeout = DefaultExecTimeout
@@ -337,8 +334,11 @@ func joinRun(c *conversation) {
 func (s *Service) run(ctx context.Context, cancel context.CancelFunc, sessionID, title string, cfg Config, c *conversation) {
 	defer func() {
 		cancel()
-		if c.done != nil {
-			close(c.done)
+		s.mu.Lock()
+		done := c.done
+		s.mu.Unlock()
+		if done != nil {
+			close(done)
 		}
 	}()
 	err := s.loop(ctx, sessionID, title, cfg, c)
@@ -360,10 +360,13 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, sessionID,
 }
 
 // loop alternates streamed assistant turns and tool execution until the model
-// answers without tool calls. Reaching the turn limit is an observable error,
-// never a silent stop.
+// answers without tool calls. When maxTurns > 0, reaching the turn limit is
+// an observable error, never a silent stop.
 func (s *Service) loop(ctx context.Context, sessionID, title string, cfg Config, c *conversation) error {
-	for turn := 0; turn < s.maxTurns; turn++ {
+	for turn := 0; ; turn++ {
+		if s.maxTurns > 0 && turn >= s.maxTurns {
+			return errf(apperror.Unknown, "Agent stopped after %d steps without finishing", s.maxTurns)
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -400,7 +403,6 @@ func (s *Service) loop(ctx context.Context, sessionID, title string, cfg Config,
 			s.append(c, chatMessage{Role: roleTool, ToolCallID: call.ID, Content: out})
 		}
 	}
-	return errf(apperror.Unknown, "Agent stopped after %d steps without finishing", s.maxTurns)
 }
 
 // emitIfCurrent drops events for a run that has been Clear'd, Dispose'd or

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AgentConfigStatus,
@@ -10,6 +10,7 @@ import type {
   PermissionPolicy,
   ThemePreference
 } from '../../../shared/types'
+import { ModelIdEditor } from './ModelIdEditor'
 import { ModalShell, useModalClose } from './ModalShell'
 import { Select } from './Select'
 
@@ -47,7 +48,7 @@ type ProviderDraft = {
   id: string
   name: string
   baseUrl: string
-  modelsText: string
+  models: string[]
   apiKey: string
   hasKey: boolean
 }
@@ -64,7 +65,7 @@ function draftsFromStatus(status: AgentConfigStatus): ProviderDraft[] {
     id: p.id,
     name: p.name,
     baseUrl: p.baseUrl,
-    modelsText: p.models.join('\n'),
+    models: [...p.models],
     apiKey: '',
     hasKey: p.hasKey
   }))
@@ -86,7 +87,7 @@ function applyStatusToDrafts(prev: ProviderDraft[], status: AgentConfigStatus): 
       ...draft,
       name: p.name,
       baseUrl: p.baseUrl,
-      modelsText: p.models.join('\n'),
+      models: [...p.models],
       apiKey: '',
       hasKey: p.hasKey
     })
@@ -98,7 +99,7 @@ function applyStatusToDrafts(prev: ProviderDraft[], status: AgentConfigStatus): 
       id: p.id,
       name: p.name,
       baseUrl: p.baseUrl,
-      modelsText: p.models.join('\n'),
+      models: [...p.models],
       apiKey: '',
       hasKey: p.hasKey
     })
@@ -153,7 +154,7 @@ function AgentSettingsSection(): React.JSX.Element | null {
         ...(draft.id ? { id: draft.id } : {}),
         name: draft.name,
         baseUrl: draft.baseUrl,
-        models: draft.modelsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+        models: draft.models
       })
       const saved =
         draft.id !== ''
@@ -216,7 +217,7 @@ function AgentSettingsSection(): React.JSX.Element | null {
         id: '',
         name: '',
         baseUrl: '',
-        modelsText: '',
+        models: [],
         apiKey: '',
         hasKey: false
       }
@@ -282,15 +283,12 @@ function AgentSettingsSection(): React.JSX.Element | null {
                 </div>
                 <div className="form-field">
                   <span>{t('settings.agentModels')}</span>
-                  <textarea
-                    value={draft.modelsText}
-                    spellCheck={false}
-                    rows={3}
-                    aria-label={`${t('settings.agentModels')} ${index + 1}`}
+                  <ModelIdEditor
+                    value={draft.models}
                     disabled={!ready || busy}
-                    onChange={(e) => patchDraft(draft.key, { modelsText: e.target.value })}
+                    ariaLabel={`${t('settings.agentModels')} ${index + 1}`}
+                    onChange={(models) => patchDraft(draft.key, { models })}
                   />
-                  <p className="settings-hint">{t('settings.agentModelsHint')}</p>
                 </div>
                 <div className="form-field">
                   <span>{t('settings.agentApiKey')}</span>
@@ -362,20 +360,6 @@ function newestProvider(
 }
 
 type SettingsPage = 'index' | 'general' | 'agent' | 'mcp'
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function capSettingsHeight(shell: HTMLElement, natural: number): number {
-  const modal = shell.closest('.modal')
-  if (!(modal instanceof HTMLElement)) return natural
-  const maxModal = Math.min(window.innerHeight * 0.9, 720)
-  const cs = getComputedStyle(modal)
-  const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
-  const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
-  return Math.min(natural, Math.max(0, maxModal - pad - border))
-}
 
 function GeneralSettingsSection({
   language,
@@ -791,47 +775,10 @@ function SettingsModalBody({
 }: Omit<SettingsModalProps, 'onClose'>): React.JSX.Element {
   const { t } = useTranslation()
   const requestClose = useModalClose()
-  const shellRef = useRef<HTMLDivElement>(null)
   const [page, setPage] = useState<SettingsPage>('index')
-  const [frameHeight, setFrameHeight] = useState<number | null>(null)
-  const [resizing, setResizing] = useState(false)
 
   const navigate = (next: SettingsPage): void => {
-    if (next === page) return
-    const from = shellRef.current?.offsetHeight ?? 0
-    if (!prefersReducedMotion() && from > 0) {
-      setResizing(false)
-      setFrameHeight(from)
-    } else {
-      setResizing(false)
-      setFrameHeight(null)
-    }
-    setPage(next)
-  }
-
-  useLayoutEffect(() => {
-    const shell = shellRef.current
-    if (!shell || frameHeight == null || resizing) return
-    const prevHeight = shell.style.height
-    shell.style.height = 'auto'
-    const to = capSettingsHeight(shell, shell.offsetHeight)
-    shell.style.height = prevHeight
-    if (Math.abs(to - frameHeight) < 1) {
-      setFrameHeight(null)
-      return
-    }
-    const id = window.requestAnimationFrame(() => {
-      setResizing(true)
-      setFrameHeight(to)
-    })
-    return () => window.cancelAnimationFrame(id)
-  }, [page, frameHeight, resizing])
-
-  const onFrameTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>): void => {
-    if (e.target !== e.currentTarget) return
-    if (e.propertyName !== 'height') return
-    setResizing(false)
-    setFrameHeight(null)
+    if (next !== page) setPage(next)
   }
 
   const title =
@@ -844,12 +791,7 @@ function SettingsModalBody({
           : t('settings.title')
 
   return (
-    <div
-      ref={shellRef}
-      className={`settings-shell${resizing ? ' is-resizing' : ''}`}
-      style={frameHeight != null ? { height: frameHeight } : undefined}
-      onTransitionEnd={onFrameTransitionEnd}
-    >
+    <div className="settings-shell">
       <div className="settings-modal-header">
         {page !== 'index' ? (
           <button
@@ -955,7 +897,12 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element {
   const { onClose, ...bodyProps } = props
 
   return (
-    <ModalShell onClose={onClose} dialogClassName="settings-modal" labelledBy="settings-modal-title">
+    <ModalShell
+      onClose={onClose}
+      dialogClassName="settings-modal"
+      labelledBy="settings-modal-title"
+      motion="simple"
+    >
       <SettingsModalBody {...bodyProps} />
     </ModalShell>
   )

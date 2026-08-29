@@ -2,8 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { createPortal } from 'react-dom'
 
 const CLOSE_FALLBACK_MS = 400
+const CLOSE_FALLBACK_SIMPLE_MS = 180
 
 type Phase = 'preenter' | 'open' | 'closing'
+
+export type ModalMotion = 'default' | 'simple' | 'none'
 
 const ModalCloseContext = createContext<() => void>(() => {})
 
@@ -20,6 +23,8 @@ interface ModalShellProps {
   closeOnEscape?: boolean
   /** Default true. Password modal keeps this false (match previous behavior). */
   closeOnOverlayClick?: boolean
+  /** Modal animation variant: 'default' (scale+fade), 'simple' (fade only), 'none' (instant). */
+  motion?: ModalMotion
 }
 
 function prefersReducedMotion(): boolean {
@@ -32,9 +37,11 @@ export function ModalShell({
   dialogClassName = '',
   labelledBy,
   closeOnEscape = true,
-  closeOnOverlayClick = true
+  closeOnOverlayClick = true,
+  motion = 'default'
 }: ModalShellProps): React.JSX.Element {
-  const [phase, setPhase] = useState<Phase>('preenter')
+  const isNoneMotion = motion === 'none' || prefersReducedMotion()
+  const [phase, setPhase] = useState<Phase>(() => (isNoneMotion ? 'open' : 'preenter'))
   const closingRef = useRef(false)
   const onCloseRef = useRef(onClose)
   const timeoutRef = useRef<number | null>(null)
@@ -43,7 +50,7 @@ export function ModalShell({
   closeOnEscapeRef.current = closeOnEscape
 
   useEffect(() => {
-    if (prefersReducedMotion()) {
+    if (isNoneMotion) {
       setPhase('open')
       return
     }
@@ -51,7 +58,7 @@ export function ModalShell({
       requestAnimationFrame(() => setPhase('open'))
     })
     return () => cancelAnimationFrame(id)
-  }, [])
+  }, [isNoneMotion])
 
   const finishClose = useCallback(() => {
     if (!closingRef.current) return
@@ -66,14 +73,15 @@ export function ModalShell({
   const requestClose = useCallback(() => {
     if (closingRef.current) return
     closingRef.current = true
-    if (prefersReducedMotion()) {
+    if (isNoneMotion) {
       onCloseRef.current()
       closingRef.current = false
       return
     }
     setPhase('closing')
-    timeoutRef.current = window.setTimeout(finishClose, CLOSE_FALLBACK_MS)
-  }, [finishClose])
+    const fallback = motion === 'simple' ? CLOSE_FALLBACK_SIMPLE_MS : CLOSE_FALLBACK_MS
+    timeoutRef.current = window.setTimeout(finishClose, fallback)
+  }, [finishClose, isNoneMotion, motion])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -98,7 +106,8 @@ export function ModalShell({
 
   const overlayClass = [
     'modal-overlay',
-    'modal-overlay--animated',
+    motion === 'default' ? 'modal-overlay--animated' : '',
+    motion === 'simple' ? 'modal-overlay--simple' : '',
     phase === 'open' ? 'is-open' : '',
     phase === 'closing' ? 'is-closing' : ''
   ]
@@ -107,7 +116,8 @@ export function ModalShell({
 
   const dialogClass = [
     'modal',
-    'modal--animated',
+    motion === 'default' ? 'modal--animated' : '',
+    motion === 'simple' ? 'modal-motion-simple' : '',
     dialogClassName,
     phase === 'open' ? 'is-open' : '',
     phase === 'closing' ? 'is-closing' : ''

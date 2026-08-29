@@ -31,6 +31,12 @@ export interface ApiBridge {
   call<T = unknown>(method: string, ...args: unknown[]): Promise<T>
   /** Subscribe to a runtime event; returns an unsubscribe function. */
   on<T = unknown>(event: string, cb: (payload: T) => void): () => void
+  /**
+   * Subscribe to native file drops via Wails `window.runtime.OnFileDrop`.
+   * Returns an unsubscribe function if supported, or undefined if the runtime
+   * is unavailable (e.g. bare node, Electron, or unsupported browser).
+   */
+  onFileDrop?(cb: (paths: string[]) => void): (() => void) | undefined
   /** Resolve the OS path for a File from a drag-drop (WebView2 `File.path`). */
   getPathForFile(file: File): string
 }
@@ -41,6 +47,12 @@ interface WailsRuntime {
   /** Wails v2.13+ returns a per-listener unsubscribe; older runtimes return void. */
   EventsOn?: (name: string, cb: (...args: unknown[]) => void) => (() => void) | void
   EventsOff?: (name: string) => void
+  /** Wails v2.13+ native file drop registration. */
+  OnFileDrop?: (
+    callback: (x: number, y: number, paths: string[]) => void,
+    useDropTarget?: boolean
+  ) => void
+  OnFileDropOff?: () => void
 }
 
 function wailsWindow(): {
@@ -82,6 +94,25 @@ export class WailsBridge implements ApiBridge {
       } else {
         runtime.EventsOff?.(event)
       }
+    }
+  }
+
+  onFileDrop(cb: (paths: string[]) => void): (() => void) | undefined {
+    const runtime = wailsWindow().runtime
+    if (typeof runtime?.OnFileDrop !== 'function') {
+      return undefined
+    }
+    // useDropTarget = true: Wails checks element under (x, y) for CSS --wails-drop-target: drop
+    runtime.OnFileDrop((_x: number, _y: number, paths: string[]) => {
+      if (Array.isArray(paths) && paths.length > 0) {
+        cb(paths)
+      }
+    }, true)
+    let off = false
+    return () => {
+      if (off) return
+      off = true
+      runtime.OnFileDropOff?.()
     }
   }
 

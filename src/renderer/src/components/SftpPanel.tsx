@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFile, faFolder } from '@fortawesome/free-solid-svg-icons'
-import type { SftpTransferProgressEvent } from '../../../shared/types'
 import { isEditableTextFile, MAX_EDITABLE_TEXT_BYTES } from '../../../shared/editable-text'
 import { ConfirmModal } from './ConfirmModal'
 import { SftpContextMenu } from './SftpContextMenu'
@@ -45,11 +44,6 @@ function formatTime(ms: number): string {
   }
 }
 
-function transferPercent(event: SftpTransferProgressEvent): number | null {
-  if (event.total <= 0) return null
-  return Math.min(100, Math.round((event.transferred / event.total) * 100))
-}
-
 export function SftpPanel({
   sessionId,
   connected,
@@ -63,7 +57,6 @@ export function SftpPanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [transfer, setTransfer] = useState<SftpTransferProgressEvent | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SftpEntry | null>(null)
   const [editTarget, setEditTarget] = useState<SftpTextEditorTarget | null>(null)
@@ -71,7 +64,6 @@ export function SftpPanel({
   /** Session id whose listing is currently cached in UI state. */
   const loadedForSessionRef = useRef<string | null>(null)
   const requestGenRef = useRef(0)
-  const transferClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragDepthRef = useRef(0)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -114,7 +106,6 @@ export function SftpPanel({
         setPathDraft('/')
         setError(null)
         setSelectedPath(null)
-        setTransfer(null)
         setEditTarget(null)
         setMenu(null)
         loadedForSessionRef.current = null
@@ -122,7 +113,6 @@ export function SftpPanel({
       return
     }
     if (expanded && loadedForSessionRef.current !== sessionId) {
-      setTransfer(null)
       void refresh()
     }
   }, [expanded, connected, sessionId, refresh])
@@ -154,36 +144,23 @@ export function SftpPanel({
     }
   }, [menu])
 
+  const cwdRef = useRef(cwd)
+  cwdRef.current = cwd
+
+  // Listen for completed transfer tasks for the current session to refresh file listing
   useEffect(() => {
-    const clearTimer = (): void => {
-      if (transferClearRef.current) {
-        clearTimeout(transferClearRef.current)
-        transferClearRef.current = null
-      }
-    }
-    const unsub = window.api.sftp.onTransferProgress((event) => {
-      if (sessionId && event.sessionId !== sessionId) return
-      clearTimer()
-      setTransfer(event)
-      if (event.done) {
-        transferClearRef.current = setTimeout(() => {
-          setTransfer((current) =>
-            current &&
-            current.name === event.name &&
-            current.direction === event.direction &&
-            current.done
-              ? null
-              : current
-          )
-          transferClearRef.current = null
-        }, 1200)
+    if (!window.api.transfer?.onTask) return
+    return window.api.transfer.onTask((task) => {
+      if (
+        task.state === 'succeeded' &&
+        task.sessionId === sessionId &&
+        task.direction === 'upload' &&
+        (!task.remotePath || task.remotePath === cwdRef.current)
+      ) {
+        void refresh()
       }
     })
-    return () => {
-      clearTimer()
-      unsub()
-    }
-  }, [sessionId])
+  }, [sessionId, refresh])
 
   // Native file drops (Wails OnFileDrop) arrive as events with absolute
   // paths — the DOM File objects carry none. The upload targets the session
@@ -195,14 +172,13 @@ export function SftpPanel({
       setError(null)
       void (async () => {
         try {
-          await window.api.sftp.uploadPaths(sessionId, paths)
-          await refresh()
+          await window.api.transfer.enqueueUpload(sessionId, cwdRef.current, paths)
         } catch (e) {
           setError(e instanceof Error ? e.message : t('sftp.error'))
         }
       })()
     })
-  }, [sessionId, connected, refresh, t])
+  }, [sessionId, connected, t])
 
   const openDir = async (name: string): Promise<void> => {
     if (!sessionId) return
@@ -282,8 +258,7 @@ export function SftpPanel({
   const handleUpload = async (): Promise<void> => {
     if (!sessionId) return
     try {
-      await window.api.sftp.upload(sessionId)
-      await refresh()
+      await window.api.transfer.chooseUploadFiles(sessionId, cwd)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('sftp.error'))
     }
@@ -292,7 +267,7 @@ export function SftpPanel({
   const handleDownload = async (entry: SftpEntry): Promise<void> => {
     if (!sessionId || entry.isDirectory) return
     try {
-      await window.api.sftp.download(sessionId, entry.name, entry.name)
+      await window.api.transfer.chooseDownloadTarget(sessionId, entry.path, entry.name)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('sftp.error'))
     }
@@ -335,14 +310,12 @@ export function SftpPanel({
   const handleDragEnter = (e: React.DragEvent): void => {
     if (!sessionId || !connected) return
     e.preventDefault()
-    e.stopPropagation()
     dragDepthRef.current += 1
     if (e.dataTransfer.types.includes('Files')) setDragOver(true)
   }
 
   const handleDragLeave = (e: React.DragEvent): void => {
     e.preventDefault()
-    e.stopPropagation()
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
     if (dragDepthRef.current === 0) setDragOver(false)
   }
@@ -350,13 +323,11 @@ export function SftpPanel({
   const handleDragOver = (e: React.DragEvent): void => {
     if (!sessionId || !connected) return
     e.preventDefault()
-    e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
   }
 
   const handleDrop = async (e: React.DragEvent): Promise<void> => {
     e.preventDefault()
-    e.stopPropagation()
     resetDrag()
     if (!sessionId || !connected) return
     // With native drops (Wails) the paths arrive via files.onDrop; the DOM
@@ -381,8 +352,7 @@ export function SftpPanel({
 
     setError(null)
     try {
-      await window.api.sftp.uploadPaths(sessionId, paths)
-      await refresh()
+      await window.api.transfer.enqueueUpload(sessionId, cwd, paths)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('sftp.error'))
     }
@@ -397,12 +367,6 @@ export function SftpPanel({
         <span className="sftp-panel-title">{t('sftp.title')}</span>
         {connected && (
           <span className="sftp-status-dot" title={t('sftp.connected')} aria-hidden />
-        )}
-        {transfer && !transfer.done && (
-          <span className="sftp-transfer-badge" title={transfer.name}>
-            {transfer.direction === 'down' ? t('sftp.downloading') : t('sftp.uploading')}
-            {transferPercent(transfer) !== null ? ` ${transferPercent(transfer)}%` : ''}
-          </span>
         )}
       </button>
 
@@ -488,47 +452,6 @@ export function SftpPanel({
                   </button>
                 </div>
               </div>
-
-              {transfer && (
-                <div
-                  className={`sftp-transfer${transfer.done ? ' sftp-transfer-done' : ''}`}
-                  role="status"
-                  aria-live="polite"
-                >
-                  <div className="sftp-transfer-meta">
-                    <span className="sftp-transfer-label">
-                      {transfer.done
-                        ? transfer.direction === 'down'
-                          ? t('sftp.downloadDone')
-                          : t('sftp.uploadDone')
-                        : transfer.direction === 'down'
-                          ? t('sftp.downloading')
-                          : t('sftp.uploading')}
-                    </span>
-                    <span className="sftp-transfer-name" title={transfer.name}>
-                      {transfer.name}
-                    </span>
-                    <span className="sftp-transfer-pct">
-                      {transferPercent(transfer) !== null
-                        ? `${transferPercent(transfer)}%`
-                        : formatSize(transfer.transferred)}
-                    </span>
-                  </div>
-                  <div className="sftp-transfer-track">
-                    <div
-                      className="sftp-transfer-fill"
-                      style={{
-                        width:
-                          transferPercent(transfer) !== null
-                            ? `${transferPercent(transfer)}%`
-                            : transfer.done
-                              ? '100%'
-                              : '35%'
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
 
               {error && <p className="sftp-error">{error}</p>}
 

@@ -47,7 +47,7 @@ async function expandProvider(
   await user.click(screen.getByRole('button', { name }))
 }
 
-describe('SettingsModal navigation', () => {
+describe('SettingsModal navigation and motion', () => {
   it('index lists only the three category rows', () => {
     const fake = installFakeApi()
     renderWithI18n(<SettingsModal {...makeProps()} />)
@@ -58,6 +58,46 @@ describe('SettingsModal navigation', () => {
     expect(fake.mocks.fonts.list).not.toHaveBeenCalled()
     expect(fake.mocks.mcpRegistration.status).not.toHaveBeenCalled()
     expect(fake.mocks.agent.status).not.toHaveBeenCalled()
+  })
+
+  it('renders settings dialog with modal-motion-simple variant', () => {
+    installFakeApi()
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveClass('modal-motion-simple')
+    expect(dialog).toHaveClass('settings-modal')
+  })
+
+  it('navigates immediately between categories without adding resizing class or inline height style', async () => {
+    installFakeApi()
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+
+    const shell = document.querySelector('.settings-shell')
+    expect(shell).not.toBeNull()
+    expect(shell).not.toHaveClass('is-resizing')
+    expect(shell?.getAttribute('style')).toBeNull()
+
+    // Navigate to General
+    await openCategory(user, 'General')
+    expect(screen.getByLabelText('Font')).toBeInTheDocument()
+    expect(shell).not.toHaveClass('is-resizing')
+    expect(shell?.getAttribute('style')).toBeNull()
+
+    // Go back
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(screen.getByRole('button', { name: 'General' })).toBeInTheDocument()
+    expect(shell).not.toHaveClass('is-resizing')
+    expect(shell?.getAttribute('style')).toBeNull()
+
+    // Rapidly navigate between pages
+    await openCategory(user, 'MCP')
+    expect(screen.getByRole('heading', { name: 'MCP' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    await openCategory(user, 'Agent')
+    expect(screen.getByRole('heading', { name: 'Agent' })).toBeInTheDocument()
+    expect(shell).not.toHaveClass('is-resizing')
+    expect(shell?.getAttribute('style')).toBeNull()
   })
 })
 
@@ -288,8 +328,8 @@ describe('SettingsModal agent providers', () => {
     await user.type(screen.getByLabelText('Name 1'), 'DeepSeek')
     await user.clear(baseUrl)
     await user.type(baseUrl, 'https://api.deepseek.com/v1')
-    await user.clear(screen.getByLabelText('Models 1'))
-    await user.type(screen.getByLabelText('Models 1'), 'deepseek-chat')
+    await user.click(screen.getByRole('button', { name: 'Remove model gpt-4o-mini' }))
+    await user.type(screen.getByLabelText('Models 1'), 'deepseek-chat{Enter}')
     await user.type(key, 'sk-secret')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -337,8 +377,6 @@ describe('SettingsModal agent providers', () => {
 
     const models = await screen.findByLabelText('Models 1')
     await waitFor(() => expect(models).toBeEnabled())
-    await user.clear(models)
-    await user.type(models, 'gpt-4o')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
@@ -346,7 +384,7 @@ describe('SettingsModal agent providers', () => {
         id: 'p1',
         name: 'OpenAI',
         baseUrl: 'https://api.openai.com/v1',
-        models: ['gpt-4o']
+        models: ['gpt-4o-mini', 'gpt-4o']
       })
     )
     expect(fake.mocks.agent.setProviderKey).not.toHaveBeenCalled()
@@ -425,7 +463,7 @@ describe('SettingsModal agent providers', () => {
     await expandProvider(user, 'DeepSeek')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled())
     expect(screen.getByLabelText('Base URL 1')).toHaveValue('https://api.deepseek.com/v1')
-    expect(screen.getByLabelText('Models 1')).toHaveValue('deepseek-chat')
+    expect(screen.getByText('deepseek-chat')).toBeInTheDocument()
   })
 
   it('adds a card expanded, collapses it after save, and expands again on click', async () => {
@@ -461,7 +499,7 @@ describe('SettingsModal agent providers', () => {
 
     await user.type(screen.getByLabelText('Name 1'), 'Groq')
     await user.type(screen.getByLabelText('Base URL 1'), 'https://api.groq.com/openai/v1')
-    await user.type(screen.getByLabelText('Models 1'), 'llama')
+    await user.type(screen.getByLabelText('Models 1'), 'llama{Enter}')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>

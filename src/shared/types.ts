@@ -138,6 +138,26 @@ export interface SftpTransferProgressEvent {
   done: boolean
 }
 
+export type TransferDirection = 'upload' | 'download'
+export type TransferState = 'queued' | 'running' | 'finalizing' | 'succeeded' | 'failed' | 'cancelled'
+
+export interface TransferTask {
+  taskId: string
+  sessionId: string
+  sessionTitle: string
+  direction: TransferDirection
+  name: string
+  remotePath: string
+  transferred: number
+  total: number
+  state: TransferState
+  error?: string
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+  retryOf?: string
+}
+
 /** One streamed assistant text fragment. */
 export interface AgentDeltaEvent {
   sessionId: string
@@ -287,6 +307,18 @@ export interface ElectronApi {
     ) => Promise<{ path: string }>
     onTransferProgress: (cb: (event: SftpTransferProgressEvent) => void) => () => void
   }
+  transfer: {
+    getTasks: () => Promise<TransferTask[]>
+    enqueueUpload: (sessionId: string, remoteDir: string, localPaths: string[]) => Promise<string[]>
+    enqueueDownload: (sessionId: string, remotePath: string, localPath: string) => Promise<string>
+    chooseUploadFiles: (sessionId: string, remoteDir: string) => Promise<string[]>
+    chooseDownloadTarget: (sessionId: string, remotePath: string, defaultName: string) => Promise<string>
+    cancel: (taskId: string) => Promise<void>
+    retry: (taskId: string) => Promise<string>
+    clear: (taskId: string) => Promise<void>
+    clearCompleted: () => Promise<void>
+    onTask: (cb: (task: TransferTask) => void) => () => void
+  }
   files: {
     /** Resolve OS path for a File from drag-drop (Electron webUtils). */
     getPathForFile: (file: File) => string
@@ -428,6 +460,16 @@ export const IPC = {
   sftpReadText: 'sftp:readText',
   sftpWriteText: 'sftp:writeText',
   sftpTransferProgress: 'sftp:transferProgress',
+  transferTask: 'transfer:task',
+  transferGetTasks: 'transfer:getTasks',
+  transferEnqueueUpload: 'transfer:enqueueUpload',
+  transferEnqueueDownload: 'transfer:enqueueDownload',
+  transferChooseUploadFiles: 'transfer:chooseUploadFiles',
+  transferChooseDownloadTarget: 'transfer:chooseDownloadTarget',
+  transferCancel: 'transfer:cancel',
+  transferRetry: 'transfer:retry',
+  transferClear: 'transfer:clear',
+  transferClearCompleted: 'transfer:clearCompleted',
   monitorSetActive: 'monitor:setActive',
   monitorUpdate: 'monitor:update',
   tunnelsDiscover: 'tunnels:discover',
@@ -454,6 +496,5 @@ export const IPC = {
   mcpRegistrationManualConfig: 'mcpRegistration:manualConfig',
   dialogOpenPrivateKey: 'dialog:openPrivateKey',
   dialogOpenUploadFiles: 'dialog:openUploadFiles',
-  dialogSaveDownload: 'dialog:saveDownload',
-  filesOnDrop: 'files:onDrop'
+  dialogSaveDownload: 'dialog:saveDownload'
 } as const

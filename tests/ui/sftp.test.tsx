@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SftpPanel } from '../../src/renderer/src/components/SftpPanel'
-import { installFakeApi } from './helpers'
-import { renderWithI18n } from './helpers'
+import { emitTransferEvent, installFakeApi, renderWithI18n } from './helpers'
 
 /**
  * SFTP surface (T1.8.3 / S2.1): Wails native file drops upload exactly once
@@ -183,9 +182,9 @@ describe('SftpPanel file drops (Wails native path)', () => {
       nativeDrop(['C:\\local\\a.txt'])
     })
     await waitFor(() =>
-      expect(fake.mocks.sftp.uploadPaths).toHaveBeenCalledWith('s1', ['C:\\local\\a.txt'])
+      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', ['C:\\local\\a.txt'])
     )
-    expect(fake.mocks.sftp.uploadPaths).toHaveBeenCalledTimes(1)
+    expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledTimes(1)
 
     // DOM drop fallback must be suppressed while files.onDrop exists — no
     // second upload even though the drop carries File objects. jsdom has no
@@ -199,18 +198,157 @@ describe('SftpPanel file drops (Wails native path)', () => {
       dataTransfer
     })
 
-    await waitFor(() => expect(fake.mocks.sftp.uploadPaths).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledTimes(1))
   })
 
   it('unsubscribes native drop and transfer subscriptions on unmount', async () => {
     const { fake, unmount } = await renderExpandedPanel()
     const dropOff = fake.mocks.files.onDrop.mock.results[0].value
-    const progressOff = fake.mocks.sftp.onTransferProgress.mock.results[0].value
+    const transferOff = fake.mocks.transfer.onTask.mock.results[0].value
 
     unmount()
 
     expect(dropOff).toHaveBeenCalledTimes(1)
-    expect(progressOff).toHaveBeenCalledTimes(1)
+    expect(transferOff).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to DOM getPathForFile when native onDrop is unavailable', async () => {
+    const { fake } = await renderExpandedPanel()
+    delete (fake.api.files as { onDrop?: unknown }).onDrop
+    const fakeFile = new File(['content'], 'f.txt')
+    fake.mocks.files.getPathForFile.mockReturnValue('C:\\local\\f.txt')
+
+    const dataTransfer = {
+      files: [fakeFile],
+      types: ['Files'],
+      dropEffect: 'none'
+    } as unknown as DataTransfer
+    fireEvent.drop(document.querySelector('.sftp-panel-body') as HTMLElement, {
+      dataTransfer
+    })
+
+    await waitFor(() =>
+      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', ['C:\\local\\f.txt'])
+    )
+  })
+
+  it('shows error when DOM drop cannot resolve file path and onDrop is unavailable', async () => {
+    const { fake } = await renderExpandedPanel()
+    delete (fake.api.files as { onDrop?: unknown }).onDrop
+    fake.mocks.files.getPathForFile.mockImplementation(() => {
+      throw new Error('NOT_IMPLEMENTED')
+    })
+
+    const dataTransfer = {
+      files: [new File(['content'], 'f.txt')],
+      types: ['Files'],
+      dropEffect: 'none'
+    } as unknown as DataTransfer
+    fireEvent.drop(document.querySelector('.sftp-panel-body') as HTMLElement, {
+      dataTransfer
+    })
+
+    expect(
+      await screen.findByText('Only files can be dropped (folders are not supported)')
+    ).toBeInTheDocument()
+    expect(fake.mocks.transfer.enqueueUpload).not.toHaveBeenCalled()
+  })
+
+  it('does not stop propagation on dragover and drop so window listeners receive them', async () => {
+    await renderExpandedPanel()
+    const target = document.querySelector('.sftp-panel-body') as HTMLElement
+
+    let windowDragOverFired = false
+    let windowDropFired = false
+    const onWindowDragOver = (): void => {
+      windowDragOverFired = true
+    }
+    const onWindowDrop = (): void => {
+      windowDropFired = true
+    }
+
+    window.addEventListener('dragover', onWindowDragOver)
+    window.addEventListener('drop', onWindowDrop)
+
+    const dataTransfer = {
+      files: [],
+      types: ['Files'],
+      dropEffect: 'none'
+    } as unknown as DataTransfer
+
+    fireEvent.dragOver(target, { dataTransfer })
+    expect(windowDragOverFired).toBe(true)
+
+    fireEvent.drop(target, { dataTransfer })
+    expect(windowDropFired).toBe(true)
+
+    window.removeEventListener('dragover', onWindowDragOver)
+    window.removeEventListener('drop', onWindowDrop)
+  })
+
+  it('only refreshes directory when an upload task completes for the current directory', async () => {
+    const { fake } = await renderExpandedPanel()
+    const listCallsBefore = fake.mocks.sftp.list.mock.calls.length
+
+    // Different session
+    emitTransferEvent(fake, {
+      taskId: 't-other-session',
+      sessionId: 's-other',
+      sessionTitle: 'Other',
+      direction: 'upload',
+      name: 'file.txt',
+      remotePath: '/home/user',
+      transferred: 100,
+      total: 100,
+      state: 'succeeded',
+      createdAt: 1000
+    })
+    expect(fake.mocks.sftp.list.mock.calls.length).toBe(listCallsBefore)
+
+    // Download task (not upload)
+    emitTransferEvent(fake, {
+      taskId: 't-dl',
+      sessionId: 's1',
+      sessionTitle: 'Session 1',
+      direction: 'download',
+      name: 'file.txt',
+      remotePath: '/home/user/file.txt',
+      transferred: 100,
+      total: 100,
+      state: 'succeeded',
+      createdAt: 1000
+    })
+    expect(fake.mocks.sftp.list.mock.calls.length).toBe(listCallsBefore)
+
+    // Upload to a different directory
+    emitTransferEvent(fake, {
+      taskId: 't-other-dir',
+      sessionId: 's1',
+      sessionTitle: 'Session 1',
+      direction: 'upload',
+      name: 'file.txt',
+      remotePath: '/var/log',
+      transferred: 100,
+      total: 100,
+      state: 'succeeded',
+      createdAt: 1000
+    })
+    expect(fake.mocks.sftp.list.mock.calls.length).toBe(listCallsBefore)
+
+    // Upload to the current directory (/home/user)
+    emitTransferEvent(fake, {
+      taskId: 't-match',
+      sessionId: 's1',
+      sessionTitle: 'Session 1',
+      direction: 'upload',
+      name: 'file.txt',
+      remotePath: '/home/user',
+      transferred: 100,
+      total: 100,
+      state: 'succeeded',
+      createdAt: 1000
+    })
+    await waitFor(() => expect(fake.mocks.sftp.list.mock.calls.length).toBe(listCallsBefore + 1))
   })
 })
 
@@ -223,7 +361,7 @@ describe('SftpPanel context menu', () => {
 
   it('opens file actions on right-click and has no inline action buttons', async () => {
     const { fake } = await renderExpandedPanel()
-    fake.mocks.sftp.download.mockResolvedValue(undefined)
+    fake.mocks.transfer.chooseDownloadTarget.mockResolvedValue('task-1')
 
     expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
@@ -237,7 +375,7 @@ describe('SftpPanel context menu', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }))
     await waitFor(() =>
-      expect(fake.mocks.sftp.download).toHaveBeenCalledWith('s1', 'readme.md', 'readme.md')
+      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith('s1', '/home/user/readme.md', 'readme.md')
     )
   })
 

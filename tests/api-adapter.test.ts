@@ -10,6 +10,7 @@ import type { ApiBridge } from '../src/renderer/src/api/bridge'
 class FakeBridge implements ApiBridge {
   calls: Array<{ method: string; args: unknown[] }> = []
   listeners = new Map<string, Set<(payload: unknown) => void>>()
+  dropListeners = new Set<(paths: string[]) => void>()
   private next: unknown = undefined
   private throwOn = new Set<string>()
 
@@ -48,8 +49,22 @@ class FakeBridge implements ApiBridge {
     }
   }
 
+  onFileDrop(cb: (paths: string[]) => void): (() => void) | undefined {
+    this.dropListeners.add(cb)
+    let off = false
+    return () => {
+      if (off) return
+      off = true
+      this.dropListeners.delete(cb)
+    }
+  }
+
   emit(event: string, payload: unknown): void {
     for (const cb of [...(this.listeners.get(event) ?? [])]) cb(payload)
+  }
+
+  emitFileDrop(paths: string[]): void {
+    for (const cb of [...this.dropListeners]) cb(paths)
   }
 
   getPathForFile(file: File): string {
@@ -101,6 +116,17 @@ describe('api adapter shape', () => {
     expect(typeof api.sftp.readText).toBe('function')
     expect(typeof api.sftp.writeText).toBe('function')
     expect(typeof api.sftp.onTransferProgress).toBe('function')
+
+    expect(typeof api.transfer.getTasks).toBe('function')
+    expect(typeof api.transfer.enqueueUpload).toBe('function')
+    expect(typeof api.transfer.enqueueDownload).toBe('function')
+    expect(typeof api.transfer.chooseUploadFiles).toBe('function')
+    expect(typeof api.transfer.chooseDownloadTarget).toBe('function')
+    expect(typeof api.transfer.cancel).toBe('function')
+    expect(typeof api.transfer.retry).toBe('function')
+    expect(typeof api.transfer.clear).toBe('function')
+    expect(typeof api.transfer.clearCompleted).toBe('function')
+    expect(typeof api.transfer.onTask).toBe('function')
 
     expect(typeof api.files.getPathForFile).toBe('function')
 
@@ -343,20 +369,20 @@ describe('api adapter binding dispatch', () => {
     expect(api.files.getPathForFile(file)).toBe('C:\\tmp\\f.txt')
   })
 
-  it('maps files.onDrop onto the files:onDrop event with absolute paths', () => {
+  it('maps files.onDrop onto bridge.onFileDrop with absolute paths', () => {
     const bridge = new FakeBridge()
     const api = createApi(bridge)
     const cb = vi.fn()
     const off = api.files.onDrop!(cb)
 
-    bridge.emit('files:onDrop', { paths: ['C:\\a.txt', 'D:\\b.txt'] })
+    bridge.emitFileDrop(['C:\\a.txt', 'D:\\b.txt'])
     expect(cb).toHaveBeenCalledTimes(1)
     expect(cb).toHaveBeenCalledWith(['C:\\a.txt', 'D:\\b.txt'])
 
     // Unsubscribe stops delivery; the second call is a no-op.
     off()
     off()
-    bridge.emit('files:onDrop', { paths: ['C:\\c.txt'] })
+    bridge.emitFileDrop(['C:\\c.txt'])
     expect(cb).toHaveBeenCalledTimes(1)
   })
 
@@ -368,14 +394,182 @@ describe('api adapter binding dispatch', () => {
     const offA = api.files.onDrop!(a)
     api.files.onDrop!(b)
 
-    bridge.emit('files:onDrop', { paths: ['/x'] })
+    bridge.emitFileDrop(['/x'])
     expect(a).toHaveBeenCalledTimes(1)
     expect(b).toHaveBeenCalledTimes(1)
 
     offA()
-    bridge.emit('files:onDrop', { paths: ['/y'] })
+    bridge.emitFileDrop(['/y'])
     expect(a).toHaveBeenCalledTimes(1)
     expect(b).toHaveBeenCalledTimes(2)
+  })
+
+  it('omits files.onDrop when bridge does not provide onFileDrop', () => {
+    const bridge: ApiBridge = {
+      call: vi.fn(),
+      on: vi.fn(),
+      getPathForFile: vi.fn()
+    }
+    const api = createApi(bridge)
+    expect(api.files.onDrop).toBeUndefined()
+  })
+})
+
+describe('api.transfer bindings', () => {
+  it('forwards getTasks to TransferGetTasks', async () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    const mockTasks = [
+      {
+        taskId: 't-1',
+        sessionId: 's-1',
+        sessionTitle: 'Host A',
+        direction: 'upload',
+        name: 'test.txt',
+        remotePath: '/home/user/test.txt',
+        transferred: 100,
+        total: 100,
+        state: 'succeeded',
+        createdAt: 1000
+      }
+    ]
+    bridge.setResult(mockTasks)
+    const res = await api.transfer.getTasks()
+    expect(res).toEqual(mockTasks)
+    expect(bridge.calls).toEqual([{ method: 'TransferGetTasks', args: [] }])
+  })
+
+  it('forwards enqueueUpload to TransferEnqueueUpload', async () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    bridge.setResult(['t-1', 't-2'])
+    const res = await api.transfer.enqueueUpload('s-1', '/remote/dir', ['/local/a.txt', '/local/b.txt'])
+    expect(res).toEqual(['t-1', 't-2'])
+    expect(bridge.calls).toEqual([
+      { method: 'TransferEnqueueUpload', args: ['s-1', '/remote/dir', ['/local/a.txt', '/local/b.txt']] }
+    ])
+  })
+
+  it('forwards enqueueDownload to TransferEnqueueDownload', async () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    bridge.setResult('t-dl-1')
+    const res = await api.transfer.enqueueDownload('s-1', '/remote/file.txt', '/local/target.txt')
+    expect(res).toBe('t-dl-1')
+    expect(bridge.calls).toEqual([
+      { method: 'TransferEnqueueDownload', args: ['s-1', '/remote/file.txt', '/local/target.txt'] }
+    ])
+  })
+
+  it('forwards chooseUploadFiles and chooseDownloadTarget', async () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    bridge.setResult(['t-up-1'])
+    await api.transfer.chooseUploadFiles('s-1', '/remote/dir')
+    expect(bridge.calls[0]).toEqual({ method: 'TransferChooseUploadFiles', args: ['s-1', '/remote/dir'] })
+
+    bridge.setResult('t-dl-1')
+    await api.transfer.chooseDownloadTarget('s-1', '/remote/file.txt', 'file.txt')
+    expect(bridge.calls[1]).toEqual({ method: 'TransferChooseDownloadTarget', args: ['s-1', '/remote/file.txt', 'file.txt'] })
+  })
+
+  it('forwards cancel, retry, clear, and clearCompleted', async () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+
+    bridge.setResult(undefined)
+    await api.transfer.cancel('t-1')
+    expect(bridge.calls[0]).toEqual({ method: 'TransferCancel', args: ['t-1'] })
+
+    bridge.setResult('t-2')
+    const retryId = await api.transfer.retry('t-1')
+    expect(retryId).toBe('t-2')
+    expect(bridge.calls[1]).toEqual({ method: 'TransferRetry', args: ['t-1'] })
+
+    bridge.setResult(undefined)
+    await api.transfer.clear('t-1')
+    expect(bridge.calls[2]).toEqual({ method: 'TransferClear', args: ['t-1'] })
+
+    await api.transfer.clearCompleted()
+    expect(bridge.calls[3]).toEqual({ method: 'TransferClearCompleted', args: [] })
+  })
+
+  it('subscribes to transfer:task events and unsubscribes cleanly', () => {
+    const bridge = new FakeBridge()
+    const api = createApi(bridge)
+    const cb = vi.fn()
+    const off = api.transfer.onTask(cb)
+
+    const payload = {
+      taskId: 't-1',
+      sessionId: 's-1',
+      sessionTitle: 'Host A',
+      direction: 'upload' as const,
+      name: 'file.txt',
+      remotePath: '/remote/file.txt',
+      transferred: 50,
+      total: 100,
+      state: 'running' as const,
+      createdAt: 1000
+    }
+    bridge.emit('transfer:task', payload)
+    expect(cb).toHaveBeenCalledWith(payload)
+
+    off()
+    off()
+    bridge.emit('transfer:task', { ...payload, state: 'succeeded' as const })
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('WailsBridge native file drop', () => {
+  const originalWindow = (globalThis as { window?: unknown }).window
+
+  afterEach(() => {
+    if (originalWindow === undefined) {
+      delete (globalThis as { window?: unknown }).window
+    } else {
+      ;(globalThis as { window: unknown }).window = originalWindow
+    }
+  })
+
+  it('calls window.runtime.OnFileDrop with useDropTarget = true and handles paths', () => {
+    const mockOnFileDrop = vi.fn()
+    const mockOnFileDropOff = vi.fn()
+    ;(globalThis as { window?: unknown }).window = {
+      runtime: {
+        OnFileDrop: mockOnFileDrop,
+        OnFileDropOff: mockOnFileDropOff
+      }
+    }
+
+    const bridge = new WailsBridge()
+    const cb = vi.fn()
+    const unsub = bridge.onFileDrop(cb)
+    expect(typeof unsub).toBe('function')
+
+    expect(mockOnFileDrop).toHaveBeenCalledTimes(1)
+    expect(mockOnFileDrop).toHaveBeenCalledWith(expect.any(Function), true)
+
+    // Trigger the callback registered with Wails
+    const wailsCb = mockOnFileDrop.mock.calls[0][0]
+    wailsCb(100, 200, ['/path/to/file.txt'])
+    expect(cb).toHaveBeenCalledWith(['/path/to/file.txt'])
+
+    // Empty paths should not trigger callback
+    wailsCb(100, 200, [])
+    expect(cb).toHaveBeenCalledTimes(1)
+
+    // Unsubscribe calls OnFileDropOff idempotently
+    unsub!()
+    expect(mockOnFileDropOff).toHaveBeenCalledTimes(1)
+    unsub!()
+    expect(mockOnFileDropOff).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns undefined when window.runtime.OnFileDrop is missing', () => {
+    const bridge = new WailsBridge()
+    expect(bridge.onFileDrop(vi.fn())).toBeUndefined()
   })
 })
 

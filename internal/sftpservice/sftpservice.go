@@ -9,6 +9,7 @@ package sftpservice
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -986,6 +987,254 @@ func (t *transfer) finish() {
 // transferStream emitted a final event on the failure path too) so the UI
 // clears its progress badge; the error itself surfaces via the binding.
 func (t *transfer) fail() { t.emit(true) }
+
+// contextProgressReader reports every byte read through onRead and checks ctx on every read.
+type contextProgressReader struct {
+	ctx    context.Context
+	r      io.Reader
+	onRead func(int)
+}
+
+func (c *contextProgressReader) Read(b []byte) (int, error) {
+	if c.ctx != nil {
+		if err := c.ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
+	n, err := c.r.Read(b)
+	if n > 0 && c.onRead != nil {
+		c.onRead(n)
+	}
+	return n, err
+}
+
+// UploadWithContext streams a local file to remoteDir with context cancellation and progress updates.
+func (s *Service) UploadWithContext(
+	ctx context.Context,
+	sessionID, remoteDir, localPath string,
+	onProgress func(transferred, total int64, finalizing bool),
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	safe, err := localpathguard.ResolveExisting(localPath, s.home)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(safe)
+	if err != nil {
+		return errf(apperror.Unknown, "Failed to inspect the local file")
+	}
+	if !info.Mode().IsRegular() {
+		return errf(apperror.Unknown, "Upload source is not a regular file")
+	}
+	ss, err := s.session(sessionID)
+	if err != nil {
+		return err
+	}
+	client, cwd, err := ss.ensure()
+	if err != nil {
+		return err
+	}
+	if remoteDir == "" {
+		remoteDir = cwd
+	}
+	name := filepath.Base(safe)
+	target, err := resolveMutable(client, JoinRemote(remoteDir, name))
+	if err != nil {
+		return err
+	}
+	local, err := os.Open(safe)
+	if err != nil {
+		return errf(apperror.Unknown, "Failed to open the local file")
+	}
+	defer local.Close()
+	total := info.Size()
+
+	tmpName := path.Join(path.Dir(target), ".nodeshell-upload-"+s.uuid())
+	remote, err := client.Create(tmpName)
+	if err != nil {
+		return mapRemoteErr(err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = remote.Close()
+			_ = client.Remove(tmpName)
+		}
+	}()
+
+	var transferred int64
+	var lastEmit time.Time
+	if onProgress != nil {
+		onProgress(0, total, false)
+		lastEmit = time.Now()
+	}
+
+	cr := &contextProgressReader{
+		ctx: ctx,
+		r:   local,
+		onRead: func(n int) {
+			transferred += int64(n)
+			now := time.Now()
+			if onProgress != nil && now.Sub(lastEmit) >= 80*time.Millisecond {
+				lastEmit = now
+				onProgress(transferred, total, false)
+			}
+		},
+	}
+
+	if _, err := io.Copy(remote, cr); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return mapRemoteErr(err)
+	}
+	if err := remote.Close(); err != nil {
+		return mapRemoteErr(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if onProgress != nil {
+		onProgress(total, total, true)
+	}
+	if err := s.commitUpload(client, tmpName, target); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+// DownloadWithContext streams a remote file to localPath with context cancellation and progress updates.
+func (s *Service) DownloadWithContext(
+	ctx context.Context,
+	sessionID, remotePath, localPath string,
+	onProgress func(transferred, total int64, finalizing bool),
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ss, err := s.session(sessionID)
+	if err != nil {
+		return err
+	}
+	client, cwd, err := ss.ensure()
+	if err != nil {
+		return err
+	}
+	var remote string
+	if strings.HasPrefix(remotePath, "/") {
+		remote = path.Clean(remotePath)
+	} else {
+		remote = JoinRemote(cwd, remotePath)
+	}
+	resolvedRemote, err := client.RealPath(remote)
+	if err != nil {
+		return mapRemoteErr(err)
+	}
+	fi, err := client.Stat(resolvedRemote)
+	if err != nil {
+		return mapRemoteErr(err)
+	}
+	if isDir(fi) {
+		return errf(apperror.Unknown, "Path is a directory")
+	}
+	safeTarget, err := localpathguard.ResolveTarget(localPath, s.home)
+	if err != nil {
+		return err
+	}
+	var existingPerm *os.FileMode
+	if stat, err := os.Stat(safeTarget); err == nil {
+		if stat.IsDir() {
+			return errf(apperror.Unknown, "Target is a directory")
+		}
+		perm := stat.Mode().Perm()
+		existingPerm = &perm
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errf(apperror.Unknown, "Failed to inspect the local target")
+	}
+
+	remoteFile, err := client.Open(resolvedRemote)
+	if err != nil {
+		return mapRemoteErr(err)
+	}
+	defer remoteFile.Close()
+
+	total := fi.Size()
+	dir := filepath.Dir(safeTarget)
+	tmp, err := os.CreateTemp(dir, ".nodeshell-download-*")
+	if err != nil {
+		return errf(apperror.Unknown, "Failed to create the local temp file")
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	var transferred int64
+	var lastEmit time.Time
+	if onProgress != nil {
+		onProgress(0, total, false)
+		lastEmit = time.Now()
+	}
+
+	cr := &contextProgressReader{
+		ctx: ctx,
+		r:   remoteFile,
+		onRead: func(n int) {
+			transferred += int64(n)
+			now := time.Now()
+			if onProgress != nil && now.Sub(lastEmit) >= 80*time.Millisecond {
+				lastEmit = now
+				onProgress(transferred, total, false)
+			}
+		},
+	}
+
+	n, err := io.Copy(tmp, cr)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return mapRemoteErr(err)
+	}
+	if n != total {
+		return errf(apperror.Unknown, "Remote file changed during download")
+	}
+	if err := tmp.Sync(); err != nil {
+		return errf(apperror.Unknown, "Failed to flush the local file")
+	}
+	if err := tmp.Close(); err != nil {
+		return errf(apperror.Unknown, "Failed to close the local file")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if onProgress != nil {
+		onProgress(total, total, true)
+	}
+	if existingPerm != nil {
+		if err := os.Chmod(tmpName, *existingPerm); err != nil {
+			return errf(apperror.Unknown, "Failed to preserve the local file permissions")
+		}
+	}
+	if err := atomicfile.Replace(tmpName, safeTarget); err != nil {
+		return errf(apperror.Unknown, "Failed to finalise the download")
+	}
+	cleanup = false
+	return nil
+}
 
 // progressReader reports every byte read through onRead.
 type progressReader struct {

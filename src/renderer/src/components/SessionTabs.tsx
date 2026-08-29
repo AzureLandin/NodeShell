@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faServer, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import type { ResolvedTheme } from '../../../shared/types'
-import type { UiSession } from '../hooks/useSessions'
+import { isPendingSessionId, type UiSession } from '../hooks/useSessions'
 import { SftpPanel } from './SftpPanel'
 import { TerminalView } from './TerminalView'
+import { TransferCenter } from './TransferCenter'
 
 interface SessionTabsProps {
   sessions: UiSession[]
@@ -118,6 +119,7 @@ export function SessionTabs({
         </button>
 
         <div className="session-tab-bar-actions">
+          <TransferCenter />
           <button
             type="button"
             className="session-agent-toggle"
@@ -135,24 +137,6 @@ export function SessionTabs({
       <div className="session-terminal-area">
         {sessions.length === 0 ? (
           <p className="main-placeholder">{t('session.placeholder')}</p>
-        ) : connecting && activeSession ? (
-          <div className="session-connecting" role="status" aria-live="polite">
-            <p className="session-connecting-status">
-              {t('auth.connectingStatus', {
-                name: activeSession.title,
-                host: activeSession.remoteHost ?? '—',
-                port: activeSession.remotePort ?? '—'
-              })}
-            </p>
-            {showSlowHint && (
-              <p className="session-connecting-hint">{t('auth.connectingHint')}</p>
-            )}
-            {onCancelConnect && (
-              <button type="button" className="btn-secondary btn-sm" onClick={onCancelConnect}>
-                {t('auth.cancelConnect')}
-              </button>
-            )}
-          </div>
         ) : (
           <>
             {activeSession &&
@@ -173,19 +157,44 @@ export function SessionTabs({
                 </div>
               )}
 
-            <div className="session-terminals">
-              {activeSession && activeSession.status !== 'connecting' && (
-                <TerminalView
-                  key={activeSession.sessionId}
-                  sessionId={activeSession.sessionId}
-                  registerDataListener={registerDataListener}
-                  visible
-                  fontFamily={terminalFontFamily}
-                  fontSize={terminalFontSize}
-                  resolvedTheme={resolvedTheme}
-                  onFontSizeChange={onTerminalFontSizeChange}
-                />
-              )}
+            {connecting && activeSession && (
+              <div className="session-connecting" role="status" aria-live="polite">
+                <p className="session-connecting-status">
+                  {t('auth.connectingStatus', {
+                    name: activeSession.title,
+                    host: activeSession.remoteHost ?? '—',
+                    port: activeSession.remotePort ?? '—'
+                  })}
+                </p>
+                {showSlowHint && (
+                  <p className="session-connecting-hint">{t('auth.connectingHint')}</p>
+                )}
+                {onCancelConnect && (
+                  <button type="button" className="btn-secondary btn-sm" onClick={onCancelConnect}>
+                    {t('auth.cancelConnect')}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div
+              className="session-terminals"
+              style={{ display: connecting ? 'none' : undefined }}
+            >
+              {sessions
+                .filter((session) => !isPendingSessionId(session.sessionId))
+                .map((session) => (
+                  <TerminalView
+                    key={session.sessionId}
+                    sessionId={session.sessionId}
+                    registerDataListener={registerDataListener}
+                    visible={session.sessionId === activeSessionId && !connecting}
+                    fontFamily={terminalFontFamily}
+                    fontSize={terminalFontSize}
+                    resolvedTheme={resolvedTheme}
+                    onFontSizeChange={onTerminalFontSizeChange}
+                  />
+                ))}
             </div>
           </>
         )}

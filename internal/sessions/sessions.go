@@ -373,6 +373,15 @@ func (m *Manager) Disconnect(sessionID string) error {
 	return nil
 }
 
+// HostID returns the host identifier associated with sessionID, or false if not found.
+func (m *Manager) HostID(sessionID string) (string, bool) {
+	sess := m.get(sessionID)
+	if sess == nil {
+		return "", false
+	}
+	return sess.hostID, true
+}
+
 // NewSFTPClient opens an SFTP client over the session's SSH connection. The
 // returned client must be Closed by the caller; the SFTP service caches one
 // per session and disposes it when the session ends.

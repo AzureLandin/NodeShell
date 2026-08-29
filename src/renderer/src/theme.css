@@ -5,10 +5,14 @@
   --radius-button: 14px;
   --radius-card: 10px;
   --radius-sheet: 12px;
+  --radius-modal: 14px;
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-sidebar: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-fast: 180ms;
   --dur-med: 320ms;
+  --dur-sidebar: 240ms;
+  --dur-sidebar-collapse: 200ms;
   --glass-blur: 28px;
   --glass-saturate: 160%;
   --chrome-gap: 8px;

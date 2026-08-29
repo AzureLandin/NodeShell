@@ -180,7 +180,7 @@ function App(): React.JSX.Element {
   const [permissionQueue, setPermissionQueue] = useState<PermissionAskEvent[]>([])
   const [sftpExpanded, setSftpExpanded] = useState(false)
   const [monitorOpen, setMonitorOpen] = useState(true)
-  const [agentOpen, setAgentOpen] = useState(true)
+  const [agentOpen, setAgentOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hostsOpen, setHostsOpen] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)

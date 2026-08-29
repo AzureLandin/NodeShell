@@ -132,8 +132,6 @@ describe('App permission prompt', () => {
     renderWithI18n(<App />)
     await waitFor(() => expect(fake.mocks.permission.onAsk).toHaveBeenCalled())
 
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Hide Agent' }))
     expect(document.querySelector('.agent-dock')).toHaveClass('is-collapsed')
 
     act(() => {

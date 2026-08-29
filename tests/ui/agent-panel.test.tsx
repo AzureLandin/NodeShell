@@ -18,9 +18,9 @@ function renderPanel(
     sessionId?: string | null
     connected?: boolean
     configured?: boolean
-    onHide?: ReturnType<typeof vi.fn>
+    onHide?: () => void
   } = {}
-): { fake: FakeApi; onOpenSettings: ReturnType<typeof vi.fn>; onHide?: ReturnType<typeof vi.fn> } {
+): { fake: FakeApi; onOpenSettings: ReturnType<typeof vi.fn>; onHide?: () => void } {
   const fake = installFakeApi()
   if (overrides.configured === false) {
     fake.mocks.agent.status.mockResolvedValue({
