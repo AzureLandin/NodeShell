@@ -18,7 +18,7 @@ import (
 const (
 	ProtocolVersion = "2024-11-05"
 	ServerName      = "nodeshell"
-	ServerVersion   = "2.0.0"
+	ServerVersion   = "2.1.0"
 
 	// MaxRequestBytes caps one newline-delimited request. Tool arguments can
 	// legitimately be large, but the cap bounds the read buffer; a longer

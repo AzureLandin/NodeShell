@@ -17,7 +17,7 @@ function AboutModalBody({ onBack }: { onBack?: () => void }): React.JSX.Element 
     void window.api.app
       .getVersion()
       .then(setVersion)
-      .catch(() => setVersion('2.0.0'))
+      .catch(() => setVersion('2.1.0'))
   }, [])
 
   return (

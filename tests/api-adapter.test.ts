@@ -329,8 +329,8 @@ describe('api adapter binding dispatch', () => {
     await expect(api.fonts.list()).resolves.toEqual(['mono'])
     expect(bridge.calls.at(-1)).toEqual({ method: 'FontsList', args: [] })
 
-    bridge.setResult('2.0.0')
-    await expect(api.app.getVersion()).resolves.toBe('2.0.0')
+    bridge.setResult('2.1.0')
+    await expect(api.app.getVersion()).resolves.toBe('2.1.0')
     expect(bridge.calls.at(-1)).toEqual({ method: 'AppGetVersion', args: [] })
     bridge.setResult(undefined)
     await api.app.openExternal!('https://example.com')

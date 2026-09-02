@@ -17,7 +17,7 @@
   "info": {
     "companyName": "NodeShell",
     "productName": "NodeShell",
-    "productVersion": "2.0.0",
+    "productVersion": "2.1.0",
     "copyright": "MIT",
     "comments": "NodeShell — desktop SSH client (Wails rebuild)"
   }
