@@ -822,10 +822,10 @@ func (c *trackingConn) Wait() error {
 	<-c.done
 	return nil
 }
-func (c *trackingConn) Close() error { return nil }
-func (c *trackingConn) Stdout() io.Reader     { return &gateReader{ch: c.done} }
-func (c *trackingConn) Stderr() io.Reader     { return &gateReader{ch: c.done} }
-func (c *trackingConn) Fingerprint() string   { return "" }
+func (c *trackingConn) Close() error        { return nil }
+func (c *trackingConn) Stdout() io.Reader   { return &gateReader{ch: c.done} }
+func (c *trackingConn) Stderr() io.Reader   { return &gateReader{ch: c.done} }
+func (c *trackingConn) Fingerprint() string { return "" }
 
 // gateReader blocks until released, so the session stays alive during the
 // test and the pump goroutine ends when we release it.
@@ -923,8 +923,8 @@ func (r *releaseReader) release() {
 // tail data that is only released later or by Close — proving that Wait never
 // closes the batcher ahead of the output pumps.
 type gateTailConn struct {
-	stdout *releaseReader
-	stderr *releaseReader
+	stdout  *releaseReader
+	stderr  *releaseReader
 	waitErr error
 	once    sync.Once
 	release func()
@@ -1188,4 +1188,28 @@ func TestManagerFaultRecordedBeforeNilEndStillEmitsError(t *testing.T) {
 	if code != apperror.Timeout {
 		t.Fatalf("session:error code = %q, want %q", code, apperror.Timeout)
 	}
+}
+
+// TestConnectDuringDisposeAllWorkerExits verifies that when a connect race finishes
+// after DisposeAll sets closing=true, the session batcher is discarded and its worker terminates.
+func TestConnectDuringDisposeAllWorkerExits(t *testing.T) {
+	sink := &recordSink{}
+	h := hosts.New(t.TempDir())
+	hostID := addHost(t, h, "srv", "127.0.0.1:22", "user")
+	conn := &fpConn{closed: make(chan struct{})}
+
+	m := New(Deps{
+		Hosts: h,
+		Sink:  sink,
+		Connector: ConnectorFunc(func(ctx context.Context, opts sshclient.Options) (Conn, error) {
+			return conn, nil
+		}),
+	})
+
+	// Set manager to closing state (simulate DisposeAll)
+	m.DisposeAll()
+
+	// Attempt connect: should be cancelled and batcher worker must exit cleanly
+	_, err := m.Connect(context.Background(), hostID, ConnectOptions{Password: "pw"})
+	assertErrorCode(t, err, apperror.Cancelled)
 }

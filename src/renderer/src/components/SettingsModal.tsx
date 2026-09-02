@@ -5,6 +5,7 @@ import type {
   AgentProviderStatus,
   LanguageCode,
   McpManualConfig,
+  McpPermissionMode,
   McpRegistrationTargetStatus,
   McpSnippetFormat,
   PermissionPolicy,
@@ -32,6 +33,7 @@ interface SettingsModalProps {
   terminalFontSize: number
   mcpIdleTimeoutMinutes: number
   mcpMaxSessions: number
+  mcpPermissionMode: McpPermissionMode
   permissionPolicy: PermissionPolicy
   onLanguageChange: (language: LanguageCode) => void
   onThemePreferenceChange: (theme: ThemePreference) => void
@@ -39,6 +41,7 @@ interface SettingsModalProps {
   onTerminalFontSizeChange: (size: number) => void
   onMcpIdleTimeoutMinutesChange: (minutes: number) => void
   onMcpMaxSessionsChange: (max: number) => void
+  onMcpPermissionModeChange: (mode: McpPermissionMode) => void
   onPermissionPolicyChange: (policy: PermissionPolicy) => void
   onClose: () => void
 }
@@ -495,14 +498,18 @@ function GeneralSettingsSection({
 function McpSettingsSection({
   mcpIdleTimeoutMinutes,
   mcpMaxSessions,
+  mcpPermissionMode,
   onMcpIdleTimeoutMinutesChange,
-  onMcpMaxSessionsChange
+  onMcpMaxSessionsChange,
+  onMcpPermissionModeChange
 }: Pick<
   SettingsModalProps,
   | 'mcpIdleTimeoutMinutes'
   | 'mcpMaxSessions'
+  | 'mcpPermissionMode'
   | 'onMcpIdleTimeoutMinutesChange'
   | 'onMcpMaxSessionsChange'
+  | 'onMcpPermissionModeChange'
 >): React.JSX.Element {
   const { t } = useTranslation()
   const [mcpTargets, setMcpTargets] = useState<McpRegistrationTargetStatus[]>([])
@@ -599,6 +606,23 @@ function McpSettingsSection({
     <div className="settings-page">
       <fieldset className="settings-section settings-section--mcp">
         <p className="settings-hint">{t('settings.mcpHint')}</p>
+        <div className="form-field">
+          <span>{t('settings.mcpPermissionMode')}</span>
+          <Select
+            value={mcpPermissionMode}
+            onChange={(v) => onMcpPermissionModeChange(v as McpPermissionMode)}
+            aria-label={t('settings.mcpPermissionMode')}
+            options={[
+              { value: 'external', label: t('settings.mcpPermissionExternal') },
+              { value: 'local', label: t('settings.mcpPermissionLocal') }
+            ]}
+          />
+        </div>
+        <p className="settings-hint">
+          {mcpPermissionMode === 'local'
+            ? t('settings.mcpPermissionLocalHint')
+            : t('settings.mcpPermissionExternalHint')}
+        </p>
         <div className="settings-mcp-options">
           <div className="form-field">
             <span>{t('settings.mcpIdleTimeout')}</span>
@@ -764,6 +788,7 @@ function SettingsModalBody({
   terminalFontSize,
   mcpIdleTimeoutMinutes,
   mcpMaxSessions,
+  mcpPermissionMode,
   permissionPolicy,
   onLanguageChange,
   onThemePreferenceChange,
@@ -771,6 +796,7 @@ function SettingsModalBody({
   onTerminalFontSizeChange,
   onMcpIdleTimeoutMinutesChange,
   onMcpMaxSessionsChange,
+  onMcpPermissionModeChange,
   onPermissionPolicyChange
 }: Omit<SettingsModalProps, 'onClose'>): React.JSX.Element {
   const { t } = useTranslation()
@@ -885,8 +911,10 @@ function SettingsModalBody({
         <McpSettingsSection
           mcpIdleTimeoutMinutes={mcpIdleTimeoutMinutes}
           mcpMaxSessions={mcpMaxSessions}
+          mcpPermissionMode={mcpPermissionMode}
           onMcpIdleTimeoutMinutesChange={onMcpIdleTimeoutMinutesChange}
           onMcpMaxSessionsChange={onMcpMaxSessionsChange}
+          onMcpPermissionModeChange={onMcpPermissionModeChange}
         />
       )}
     </div>

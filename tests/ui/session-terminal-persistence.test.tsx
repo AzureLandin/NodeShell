@@ -294,4 +294,102 @@ describe('Session Terminal Persistence', () => {
     // termA is now disposed
     expect(termA.dispose).toHaveBeenCalledTimes(1)
   })
+
+  it('routes simultaneous concurrent output to Alpha and Beta during rapid tab switching without crosstalk', async () => {
+    const fake = await renderApp([
+      makeHost({ id: 'h1', name: 'Alpha', host: '10.0.0.1' }),
+      makeHost({ id: 'h2', name: 'Beta', host: '10.0.0.2' })
+    ])
+    fake.mocks.sessions.connect.mockImplementation((hostId: string) =>
+      Promise.resolve({ sessionId: hostId === 'h1' ? 's1' : 's2' })
+    )
+    const user = userEvent.setup()
+
+    await openHostsPicker(user)
+    await user.click(within(hostRow('Alpha')).getByRole('button', { name: 'Connect' }))
+    const alphaTab = await screen.findByRole('tab', { name: /Alpha/ })
+
+    await openHostsPicker(user)
+    await user.click(within(hostRow('Beta')).getByRole('button', { name: 'Connect' }))
+    const betaTab = await screen.findByRole('tab', { name: /Beta/ })
+
+    expect(mockInstances.length).toBe(2)
+    const termA = mockInstances[0]!
+    const termB = mockInstances[1]!
+
+    // Concurrently emit interleaved bursts while rapidly switching tabs
+    for (let i = 0; i < 10; i++) {
+      act(() => {
+        emitSessionEvent(fake, 'data', { sessionId: 's1', data: `alpha-burst-${i}\n` })
+        emitSessionEvent(fake, 'data', { sessionId: 's2', data: `beta-burst-${i}\n` })
+      })
+      if (i % 2 === 0) {
+        await user.click(alphaTab)
+      } else {
+        await user.click(betaTab)
+      }
+    }
+
+    // Verify termA received alpha data and never received beta data
+    await waitFor(() => {
+      expect(termA.write).toHaveBeenCalledWith(expect.stringContaining('alpha-burst-9'))
+    })
+    expect(termA.write).not.toHaveBeenCalledWith(expect.stringContaining('beta-burst'))
+
+    // Verify termB received beta data and never received alpha data
+    await waitFor(() => {
+      expect(termB.write).toHaveBeenCalledWith(expect.stringContaining('beta-burst-9'))
+    })
+    expect(termB.write).not.toHaveBeenCalledWith(expect.stringContaining('alpha-burst'))
+
+    // Both terminals stayed alive without unnecessary re-creations
+    expect(mockInstances.length).toBe(2)
+    expect(termA.dispose).not.toHaveBeenCalled()
+    expect(termB.dispose).not.toHaveBeenCalled()
+  })
+
+  it('reconnects after a remote close by replacing only that terminal instance', async () => {
+    const fake = await renderApp([makeHost({ id: 'h1', name: 'Alpha', host: '10.0.0.1' })])
+    fake.mocks.sessions.connect
+      .mockResolvedValueOnce({ sessionId: 's1' })
+      .mockResolvedValueOnce({ sessionId: 's1-re' })
+    const user = userEvent.setup()
+
+    await openHostsPicker(user)
+    await user.click(within(hostRow('Alpha')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('tab', { name: /Alpha/ })
+    await waitFor(() => expect(mockInstances.length).toBe(1))
+    const termA = mockInstances[0]!
+
+    act(() => {
+      emitSessionEvent(fake, 'closed', { sessionId: 's1' })
+    })
+    await user.click(await screen.findByRole('button', { name: 'Reconnect' }))
+
+    await waitFor(() => expect(fake.mocks.sessions.connect).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(termA.dispose).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockInstances.length).toBe(2))
+    expect(mockInstances[1]!.dispose).not.toHaveBeenCalled()
+  })
+
+  it('treats a repeated remote close as idempotent and does not dispose the waiting tab', async () => {
+    const fake = await renderApp([makeHost({ id: 'h1', name: 'Alpha', host: '10.0.0.1' })])
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 's1' })
+    const user = userEvent.setup()
+
+    await openHostsPicker(user)
+    await user.click(within(hostRow('Alpha')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('tab', { name: /Alpha/ })
+    await waitFor(() => expect(mockInstances.length).toBe(1))
+    const termA = mockInstances[0]!
+
+    act(() => {
+      emitSessionEvent(fake, 'closed', { sessionId: 's1' })
+      emitSessionEvent(fake, 'closed', { sessionId: 's1' })
+    })
+
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument()
+    expect(termA.dispose).not.toHaveBeenCalled()
+    expect(mockInstances.length).toBe(1)
+  })
 })

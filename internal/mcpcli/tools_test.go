@@ -607,3 +607,60 @@ type recordingPermGate struct {
 func (g recordingPermGate) Ask(_ context.Context, req permission.Request) (permission.Decision, error) {
 	return g.fn(req), nil
 }
+
+func TestCallSensitiveToolsExecuteWhenAuthNil(t *testing.T) {
+	m := newFakeManager()
+	m.execOut = "ok"
+	sf := &fakeSFTP{cwd: "/home", writeResolved: "/tmp/x"}
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: sf,
+		MaxSessions: 2, IdleTimeout: time.Minute,
+	})
+	sid := connectOK(t, rt, "h1")
+
+	if _, err := rt.Call(context.Background(), "run_command", map[string]any{"sessionId": sid, "command": "id"}); err != nil {
+		t.Fatalf("run_command with nil Auth: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_write", map[string]any{"sessionId": sid, "path": "/tmp/x", "content": "hi"}); err != nil {
+		t.Fatalf("sftp_write with nil Auth: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_upload", map[string]any{"sessionId": sid, "localPath": "/home/me/a.txt"}); err != nil {
+		t.Fatalf("sftp_upload with nil Auth: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_download", map[string]any{"sessionId": sid, "remotePath": "a.txt", "localPath": "/home/me/a.txt"}); err != nil {
+		t.Fatalf("sftp_download with nil Auth: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{"sessionId": sid}); err != nil {
+		t.Fatalf("sftp_list with nil Auth: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_read", map[string]any{"sessionId": sid, "path": "a.txt"}); err != nil {
+		t.Fatalf("sftp_read with nil Auth: %v", err)
+	}
+}
+
+func TestCallLocalModeAsksNativeGate(t *testing.T) {
+	m := newFakeManager()
+	m.execOut = "ok"
+	var seen []permission.Request
+	auth := permission.NewMCPAuthorizer(permission.MCPModeLocal, recordingPermGate{
+		fn: func(req permission.Request) permission.Decision {
+			seen = append(seen, req)
+			return permission.DecisionAllowOnce
+		},
+	})
+	rt := New(Deps{
+		Hosts: newFakeHostStore(testHost("h1", "lab")), Manager: m, SFTP: &fakeSFTP{},
+		MaxSessions: 2, IdleTimeout: time.Minute, Auth: auth,
+	})
+	sid := connectOK(t, rt, "h1")
+
+	if _, err := rt.Call(context.Background(), "run_command", map[string]any{"sessionId": sid, "command": "id"}); err != nil {
+		t.Fatalf("run_command local: %v", err)
+	}
+	if _, err := rt.Call(context.Background(), "sftp_list", map[string]any{"sessionId": sid}); err != nil {
+		t.Fatalf("sftp_list local: %v", err)
+	}
+	if len(seen) != 1 || seen[0].Tool != "run_command" || seen[0].Source != permission.SourceMCP {
+		t.Fatalf("local mode asks = %+v, want one run_command MCP prompt", seen)
+	}
+}

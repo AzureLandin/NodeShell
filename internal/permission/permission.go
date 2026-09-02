@@ -1,8 +1,15 @@
-// Package permission gates sensitive agent and MCP tool calls. The GUI and
-// --mcp processes are separate, so the prompt itself is injected: the GUI
-// uses an in-app modal (ChannelGate), MCP uses a native OS dialog
-// (NativeGate). A nil Gate allows, which is how existing tests keep running
-// without a UI.
+// Package permission gates sensitive agent and MCP tool calls.
+//
+// User-consent (whether the human allowed this tool call) is separate from
+// NodeShell safety checks (argument validation, home-path guard, host keys,
+// session limits, timeouts). This package only implements user-consent.
+//
+// The GUI sidebar agent always uses ChannelGate plus the persisted
+// permissionPolicy. The --mcp process uses MCPMode: external (default) leaves
+// consent to the MCP client and does not construct NativeGate; local keeps
+// NativeGate as a compatibility prompt. A nil Authorizer/Gate allows the
+// consent step (tests and MCP external) but must never be treated as a
+// licence to skip path, session, or host-key checks.
 package permission
 
 import (
@@ -33,6 +40,17 @@ const (
 	PolicyAsk   Policy = "ask"
 	PolicyAllow Policy = "allow"
 	PolicyDeny  Policy = "deny"
+)
+
+// MCPMode is how the --mcp process handles user consent. It never disables
+// NodeShell safety checks.
+type MCPMode string
+
+const (
+	// MCPModeExternal leaves user consent to the MCP client. Default.
+	MCPModeExternal MCPMode = "external"
+	// MCPModeLocal shows a NodeShell native confirmation dialog.
+	MCPModeLocal MCPMode = "local"
 )
 
 // Decision is one answer to an ask. MCP native dialogs only produce once or
@@ -130,6 +148,39 @@ func Sensitive(tool string) bool {
 	}
 }
 
+// ParseMCPMode maps a settings value onto an MCPMode. A missing/empty value
+// is the product default (external). Unknown values fail closed to local so
+// a corrupt file cannot silently skip the native prompt; they still never
+// skip path, session, or host-key checks.
+func ParseMCPMode(value string) MCPMode {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(MCPModeLocal):
+		return MCPModeLocal
+	case string(MCPModeExternal):
+		return MCPModeExternal
+	case "":
+		return MCPModeExternal
+	default:
+		return MCPModeLocal
+	}
+}
+
+// NewMCPAuthorizer returns the --mcp consent Authorizer. external yields
+// nil (no NativeGate). local yields a Service with PolicyAsk and the given
+// Gate so GUI permissionPolicy and allow-session memory cannot leak in.
+func NewMCPAuthorizer(mode MCPMode, gate Gate) Authorizer {
+	if mode != MCPModeLocal {
+		return nil
+	}
+	if gate == nil {
+		gate = &NativeGate{}
+	}
+	return NewService(ServiceDeps{
+		Gate:   gate,
+		Policy: func() Policy { return PolicyAsk },
+	})
+}
+
 // ParsePolicy maps a settings value onto a Policy. Unknown or empty values
 // fall back to ask, so a corrupt file never silently auto-allows.
 func ParsePolicy(value string) Policy {
@@ -154,7 +205,9 @@ func ParseDecision(value string) (Decision, bool) {
 	}
 }
 
-// Authorize returns nil when the tool may run, or ErrDenied. Non-sensitive
+// Authorize is the user-consent step only. Returning nil means "the human
+// allowed this call" (or consent is not required); it is not a substitute
+// for path guards, host-key checks, or session validation. Non-sensitive
 // tools always pass. A cancelled ctx is a denial, never an execution.
 func (s *Service) Authorize(ctx context.Context, req Request) error {
 	if s == nil || !Sensitive(req.Tool) {

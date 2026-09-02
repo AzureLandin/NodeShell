@@ -88,7 +88,7 @@ export function createFakeApi(): FakeApi {
     sessions: {
       connect: vi.fn(),
       write: vi.fn(),
-      resize: vi.fn(),
+      resize: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn(),
       cancelConnect: vi.fn(),
       onData: vi.fn(() => () => undefined),

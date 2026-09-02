@@ -11,9 +11,9 @@ import (
 // never pops a real window.
 type PromptFunc func(req Request) Decision
 
-// NativeGate prompts with a blocking OS dialog. Used by the --mcp process,
-// which has no WebView and cannot emit permission:ask. Yes is allow-once;
-// No (or a missing dialog backend) is deny.
+// NativeGate prompts with a blocking OS dialog. Used only by --mcp when
+// mcpPermissionMode is local (the process has no WebView). Yes is allow-once;
+// No (or a missing dialog backend) is deny. external mode never constructs it.
 type NativeGate struct {
 	Prompt PromptFunc
 }

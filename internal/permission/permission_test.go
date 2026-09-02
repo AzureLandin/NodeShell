@@ -285,6 +285,63 @@ func TestErrDeniedCode(t *testing.T) {
 	}
 }
 
+func TestParseMCPMode(t *testing.T) {
+	if ParseMCPMode("") != MCPModeExternal || ParseMCPMode("external") != MCPModeExternal {
+		t.Fatal("missing/external must be external")
+	}
+	if ParseMCPMode("LOCAL") != MCPModeLocal {
+		t.Fatal("local must parse case-insensitively")
+	}
+	if ParseMCPMode("disabled") != MCPModeLocal || ParseMCPMode("allow-all") != MCPModeLocal {
+		t.Fatal("unknown values must fail closed to local, not skip the prompt")
+	}
+}
+
+func TestNewMCPAuthorizerExternalIsNil(t *testing.T) {
+	asks := 0
+	gate := &countingGate{fn: func(Request) Decision {
+		asks++
+		return DecisionAllowOnce
+	}}
+	if auth := NewMCPAuthorizer(MCPModeExternal, gate); auth != nil {
+		t.Fatal("external must not construct an authorizer or NativeGate")
+	}
+	if asks != 0 {
+		t.Fatalf("external must not prompt, asks=%d", asks)
+	}
+}
+
+func TestNewMCPAuthorizerLocalUsesPolicyAskAndOwnMemory(t *testing.T) {
+	guiAsks, mcpAsks := 0, 0
+	gui := NewService(ServiceDeps{
+		Gate: &countingGate{fn: func(Request) Decision {
+			guiAsks++
+			return DecisionAllowSession
+		}},
+		Policy: func() Policy { return PolicyAllow },
+	})
+	mcp := NewMCPAuthorizer(MCPModeLocal, &countingGate{fn: func(Request) Decision {
+		mcpAsks++
+		return DecisionAllowOnce
+	}})
+	req := Request{Tool: "bash", SessionID: "s1"}
+	if err := gui.Authorize(context.Background(), req); err != nil {
+		t.Fatalf("gui: %v", err)
+	}
+	if err := mcp.Authorize(context.Background(), req); err != nil {
+		t.Fatalf("mcp first: %v", err)
+	}
+	if err := mcp.Authorize(context.Background(), req); err != nil {
+		t.Fatalf("mcp second: %v", err)
+	}
+	if guiAsks != 0 {
+		t.Fatalf("GUI policy allow must not prompt, guiAsks=%d", guiAsks)
+	}
+	if mcpAsks != 2 {
+		t.Fatalf("MCP local must ask every time (PolicyAsk, allow-once) and not reuse GUI grants, mcpAsks=%d", mcpAsks)
+	}
+}
+
 type countingGate struct {
 	fn func(Request) Decision
 }

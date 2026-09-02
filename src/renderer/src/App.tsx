@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { HostConfig, LanguageCode, PermissionAskEvent, PermissionDecision, PermissionPolicy, ThemePreference } from '../../shared/types'
+import type {
+  HostConfig,
+  LanguageCode,
+  McpPermissionMode,
+  PermissionAskEvent,
+  PermissionDecision,
+  PermissionPolicy,
+  ThemePreference
+} from '../../shared/types'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChartLine, faGear } from '@fortawesome/free-solid-svg-icons'
 import { AgentPanel } from './components/AgentPanel'
@@ -176,6 +184,7 @@ function App(): React.JSX.Element {
   const [terminalFontSize, setTerminalFontSize] = useState(14)
   const [mcpIdleTimeoutMinutes, setMcpIdleTimeoutMinutes] = useState(10)
   const [mcpMaxSessions, setMcpMaxSessions] = useState(8)
+  const [mcpPermissionMode, setMcpPermissionMode] = useState<McpPermissionMode>('external')
   const [permissionPolicy, setPermissionPolicy] = useState<PermissionPolicy>('ask')
   const [permissionQueue, setPermissionQueue] = useState<PermissionAskEvent[]>([])
   const [sftpExpanded, setSftpExpanded] = useState(false)
@@ -213,6 +222,7 @@ function App(): React.JSX.Element {
         fontSizePersistBaselineRef.current = settings.terminalFontSize
         setMcpIdleTimeoutMinutes(settings.mcpIdleTimeoutMinutes)
         setMcpMaxSessions(settings.mcpMaxSessions)
+        setMcpPermissionMode(settings.mcpPermissionMode === 'local' ? 'local' : 'external')
         setPermissionPolicy(settings.permissionPolicy ?? 'ask')
         await i18n.changeLanguage(settings.language)
       } catch {
@@ -223,6 +233,7 @@ function App(): React.JSX.Element {
         fontSizePersistBaselineRef.current = 14
         setMcpIdleTimeoutMinutes(10)
         setMcpMaxSessions(8)
+        setMcpPermissionMode('external')
         setPermissionPolicy('ask')
         await i18n.changeLanguage('zh')
       }
@@ -369,6 +380,18 @@ function App(): React.JSX.Element {
       setMcpMaxSessions(saved.mcpMaxSessions)
     } catch {
       setMcpMaxSessions(previous)
+      setToast(t('auth.connectionFailed'))
+    }
+  }
+
+  const handleMcpPermissionModeChange = async (next: McpPermissionMode): Promise<void> => {
+    const previous = mcpPermissionMode
+    setMcpPermissionMode(next)
+    try {
+      const saved = await window.api.settings.set({ mcpPermissionMode: next })
+      setMcpPermissionMode(saved.mcpPermissionMode === 'local' ? 'local' : 'external')
+    } catch {
+      setMcpPermissionMode(previous)
       setToast(t('auth.connectionFailed'))
     }
   }
@@ -758,13 +781,17 @@ function App(): React.JSX.Element {
           terminalFontSize={terminalFontSize}
           mcpIdleTimeoutMinutes={mcpIdleTimeoutMinutes}
           mcpMaxSessions={mcpMaxSessions}
+          mcpPermissionMode={mcpPermissionMode}
           permissionPolicy={permissionPolicy}
           onLanguageChange={(lang) => void handleLanguageChange(lang)}
           onThemePreferenceChange={(theme) => void handleThemePreferenceChange(theme)}
           onTerminalFontFamilyChange={(family) => void handleTerminalFontFamilyChange(family)}
           onTerminalFontSizeChange={(size) => void handleTerminalFontSizeChange(size)}
-          onMcpIdleTimeoutMinutesChange={(minutes) => void handleMcpIdleTimeoutMinutesChange(minutes)}
+          onMcpIdleTimeoutMinutesChange={(minutes) =>
+            void handleMcpIdleTimeoutMinutesChange(minutes)
+          }
           onMcpMaxSessionsChange={(max) => void handleMcpMaxSessionsChange(max)}
+          onMcpPermissionModeChange={(mode) => void handleMcpPermissionModeChange(mode)}
           onPermissionPolicyChange={(policy) => void handlePermissionPolicyChange(policy)}
           onClose={() => setSettingsOpen(false)}
         />

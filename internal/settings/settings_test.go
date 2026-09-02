@@ -53,7 +53,7 @@ func TestGetFromFullFixture(t *testing.T) {
 			BaseURL: "https://api.deepseek.com/v1", Models: []string{"deepseek-chat"},
 		}},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: "deepseek-chat",
-		PermissionPolicy: Defaults.PermissionPolicy}
+		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -70,7 +70,7 @@ func TestPartialFixtureFillsDefaults(t *testing.T) {
 	}
 	if got.Language != "en" || got.TerminalFontFamily != "Hack" || got.TerminalFontSize != 14 ||
 		got.McpIdleTimeoutMinutes != 10 || got.McpMaxSessions != 8 || got.ThemePreference != "system" ||
-		got.PermissionPolicy != "ask" {
+		got.PermissionPolicy != "ask" || got.McpPermissionMode != "external" {
 		t.Fatalf("partial merge mismatch: %+v", got)
 	}
 	if len(got.AgentProviders) != 1 || got.AgentProviders[0].ID != LegacyProviderID {
@@ -122,7 +122,7 @@ func TestClampsValues(t *testing.T) {
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
 		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
-		PermissionPolicy: Defaults.PermissionPolicy}
+		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clamp mismatch: got %+v want %+v", got, want)
 	}
@@ -243,7 +243,7 @@ func TestWrongTypedStringFieldsNormalizeLikeTS(t *testing.T) {
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
 		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
-		PermissionPolicy: Defaults.PermissionPolicy}
+		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v (TS normalize* falls back to defaults)", got, want)
 	}
@@ -330,6 +330,41 @@ func TestPermissionPolicyNormalisation(t *testing.T) {
 	}
 	if got.PermissionPolicy != "deny" {
 		t.Fatalf("Set permissionPolicy = %q", got.PermissionPolicy)
+	}
+}
+
+func TestMcpPermissionModeNormalisation(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{`{}`, "external"},
+		{`{"mcpPermissionMode": "external"}`, "external"},
+		{`{"mcpPermissionMode": "LOCAL"}`, "local"},
+		{`{"mcpPermissionMode": "local"}`, "local"},
+		{`{"mcpPermissionMode": "disabled"}`, "local"},
+		{`{"mcpPermissionMode": 7}`, "external"},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := New(dir).Get()
+		if err != nil {
+			t.Fatalf("Get(%s): %v", tc.raw, err)
+		}
+		if got.McpPermissionMode != tc.want {
+			t.Fatalf("mcpPermissionMode from %s = %q, want %q", tc.raw, got.McpPermissionMode, tc.want)
+		}
+	}
+	local := "local"
+	got, err := newStore(t).Set(Patch{McpPermissionMode: &local})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.McpPermissionMode != "local" {
+		t.Fatalf("Set mcpPermissionMode = %q", got.McpPermissionMode)
 	}
 }
 

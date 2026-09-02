@@ -14,6 +14,12 @@ export interface AppSettings {
   mcpIdleTimeoutMinutes: number
   /** Max concurrent MCP SSH sessions (default 8). */
   mcpMaxSessions: number
+  /**
+   * Who owns user consent for `--mcp` sensitive tools. `external` (default)
+   * leaves confirmation to the MCP client; `local` uses NodeShell NativeGate.
+   * NodeShell safety checks always remain in effect.
+   */
+  mcpPermissionMode?: McpPermissionMode
   /** UI + terminal theme preference (default system). */
   themePreference: ThemePreference
   /**
@@ -32,11 +38,13 @@ export interface AppSettings {
   /** Model id the sidebar agent requests (legacy single-endpoint field). */
   agentModel?: string
   /**
-   * How sensitive agent/MCP tools (commands, writes, uploads, downloads)
-   * are authorised. Default `ask`.
+   * How sensitive GUI sidebar-agent tools (commands, writes, uploads,
+   * downloads) are authorised. Default `ask`. Does not control `--mcp`.
    */
   permissionPolicy?: PermissionPolicy
 }
+
+export type McpPermissionMode = 'external' | 'local'
 
 export interface AgentProvider {
   id: string

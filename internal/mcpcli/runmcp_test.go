@@ -100,3 +100,89 @@ func TestRunMCPHandshake(t *testing.T) {
 		t.Fatalf("hosts = %v", hosts)
 	}
 }
+
+func TestRunMCPExternalDoesNotConstructNativeGate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hosts.json"), []byte(`{"hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	constructed := 0
+	oldDir, oldHome, oldCreds, oldGate := resolveDataDir, userHomeDir, newCredentials, newPermissionGate
+	t.Cleanup(func() {
+		resolveDataDir, userHomeDir, newCredentials, newPermissionGate = oldDir, oldHome, oldCreds, oldGate
+	})
+	resolveDataDir = func() (string, error) { return dir, nil }
+	userHomeDir = func() (string, error) { return t.TempDir(), nil }
+	newCredentials = func() *credentials.Store { return credentials.New(nopCredBackend{}) }
+	newPermissionGate = func() permission.Gate {
+		constructed++
+		return permission.AllowGate{}
+	}
+	runMCPListHosts(t)
+	if constructed != 0 {
+		t.Fatalf("external mode constructed NativeGate %d times", constructed)
+	}
+}
+
+func TestRunMCPLocalConstructsNativeGate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hosts.json"), []byte(`{"hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"mcpPermissionMode":"local"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	constructed := 0
+	oldDir, oldHome, oldCreds, oldGate := resolveDataDir, userHomeDir, newCredentials, newPermissionGate
+	t.Cleanup(func() {
+		resolveDataDir, userHomeDir, newCredentials, newPermissionGate = oldDir, oldHome, oldCreds, oldGate
+	})
+	resolveDataDir = func() (string, error) { return dir, nil }
+	userHomeDir = func() (string, error) { return t.TempDir(), nil }
+	newCredentials = func() *credentials.Store { return credentials.New(nopCredBackend{}) }
+	newPermissionGate = func() permission.Gate {
+		constructed++
+		return permission.AllowGate{}
+	}
+	runMCPListHosts(t)
+	if constructed != 1 {
+		t.Fatalf("local mode constructed NativeGate %d times, want 1", constructed)
+	}
+}
+
+func runMCPListHosts(t *testing.T) {
+	t.Helper()
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"smoke","version":"1"},"capabilities":{}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_hosts","arguments":{}}}`,
+	}, "\n") + "\n"
+	var out, errOut syncBuffer
+	inR, inW := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- RunMCP(context.Background(), inR, &out, &errOut) }()
+	if _, err := io.WriteString(inW, input); err != nil {
+		_ = inW.Close()
+		t.Fatalf("write input: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if countStdoutJSONLines(out.String()) >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = inW.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunMCP: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunMCP did not return after EOF")
+	}
+	if errOut.String() != "" {
+		t.Fatalf("stderr = %q, want clean", errOut.String())
+	}
+}

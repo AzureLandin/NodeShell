@@ -283,7 +283,7 @@ func (m *Manager) Connect(ctx context.Context, hostID string, opts ConnectOption
 		hostID:  hostID,
 		conn:    conn,
 	}
-	sess.batcher = newOutputBatcher(flushInterval, flushBytes, func(data []byte) {
+	sess.batcher = newSessionBatcher(func(data []byte) {
 		m.sink.Emit(EventSessionData, DataEvent{SessionID: sess.ID, Data: string(data)})
 	})
 
@@ -293,6 +293,7 @@ func (m *Manager) Connect(ctx context.Context, hostID string, opts ConnectOption
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
+		sess.batcher.Discard()
 		_ = conn.Close()
 		return ConnectResult{}, &Error{Code: apperror.Cancelled, Message: "Connection cancelled"}
 	}

@@ -100,7 +100,9 @@ type Deps struct {
 	// NextSink receives forwarded session events after the runtime has
 	// handled them (production passes nil/nop).
 	NextSink sessions.EventSink
-	// Auth gates sensitive tools. Nil allows, matching existing tests.
+	// Auth is the user-consent gate for sensitive tools. Nil skips only that
+	// prompt (MCP external mode and most tests). Path guards, host keys,
+	// session limits and argument validation still run.
 	Auth permission.Authorizer
 	// GuestSessions lets Call operate on session ids the runtime did not
 	// ConnectHost. The in-app Agent uses this so GUI tabs are valid targets.
@@ -245,8 +247,10 @@ type CallOpts struct {
 	Title string
 }
 
-// authorize asks before a sensitive MCP tool runs. Nil Auth allows (tests).
-// The request never carries file contents or passwords.
+// authorize is the user-consent step before a sensitive tool runs. Nil Auth
+// skips only this prompt (MCP external mode / tests) and must not be read as
+// skipping path, session, host-key, or argument checks. The request never
+// carries file contents or passwords.
 func (r *Runtime) authorize(ctx context.Context, opts CallOpts, tool, sessionID, summary, detail string) error {
 	if r.auth == nil {
 		return nil

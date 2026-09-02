@@ -80,16 +80,18 @@ var (
 	userHomeDir       = os.UserHomeDir
 	newCredentials    = func() *credentials.Store { return credentials.New(keyring.NewBackend()) }
 	newSessionManager = func(d sessions.Deps) mcpManager { return sessions.New(d) }
-	// newPermissionGate is NativeGate in production. Tests replace it so a
-	// tools/call never pops a real OS dialog.
+	// newPermissionGate is NativeGate in production, used only for MCP
+	// permission mode "local". Tests replace it so a tools/call never pops a
+	// real OS dialog. external mode never calls this.
 	newPermissionGate = func() permission.Gate { return &permission.NativeGate{} }
 )
 
 // RunMCP is the production --mcp entry: it resolves the OS data dir, wires
 // the stores, an independent session manager (never the GUI's), the SFTP
 // service and the idle reaper, then serves the stdio protocol until EOF or an
-// interrupt. The MCP session policy (max sessions, idle timeout) comes from
-// the user settings with the product defaults as fallback.
+// interrupt. Session policy (max sessions, idle timeout) and MCP permission
+// mode come from user settings. external (default) does not construct a
+// NativeGate; the MCP client owns user consent. Safety checks still run.
 func RunMCP(ctx context.Context, in io.Reader, out io.Writer, errOut io.Writer) error {
 	dir, err := resolveDataDir()
 	if err != nil {
@@ -110,24 +112,25 @@ func RunMCP(ctx context.Context, in io.Reader, out io.Writer, errOut io.Writer) 
 	}
 
 	maxSessions, idleTimeout := DefaultMaxSessions, DefaultIdleTimeout
+	mcpMode := permission.MCPModeExternal
 	store := settings.New(dir)
 	if st, err := store.Get(); err == nil {
 		maxSessions = st.McpMaxSessions
 		idleTimeout = time.Duration(st.McpIdleTimeoutMinutes) * time.Minute
+		mcpMode = permission.ParseMCPMode(st.McpPermissionMode)
 	} else {
 		fmt.Fprintf(errOut, "nodeshell: read settings: %v\n", err)
 	}
 
-	auth := permission.NewService(permission.ServiceDeps{
-		Gate: newPermissionGate(),
-		Policy: func() permission.Policy {
-			st, err := store.Get()
-			if err != nil {
-				return permission.PolicyAsk
-			}
-			return permission.ParsePolicy(st.PermissionPolicy)
-		},
-	})
+	// external: the MCP client owns user consent; do not construct NativeGate.
+	// local: NativeGate with PolicyAsk. GUI permissionPolicy and in-memory
+	// allow-session grants never apply here. Either way, path/host-key/
+	// session checks still run inside the runtime.
+	var gate permission.Gate
+	if mcpMode == permission.MCPModeLocal {
+		gate = newPermissionGate()
+	}
+	auth := permission.NewMCPAuthorizer(mcpMode, gate)
 	rt := New(Deps{Hosts: h, MaxSessions: maxSessions, IdleTimeout: idleTimeout, Auth: auth})
 	m := newSessionManager(sessions.Deps{
 		Hosts:    h,

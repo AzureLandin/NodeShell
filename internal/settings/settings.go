@@ -18,6 +18,7 @@ import (
 
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/atomicfile"
+	"nodeshell/internal/permission"
 )
 
 // AgentProvider is one named OpenAI-compatible endpoint. The API key lives in
@@ -57,8 +58,11 @@ type AppSettings struct {
 	// endpoint fields when the file was an object. Not persisted.
 	AgentProvidersPresent bool `json:"-"`
 	// PermissionPolicy is ask (default), allow, or deny. It gates sensitive
-	// agent and MCP tools (commands, writes, uploads, downloads).
+	// GUI sidebar-agent tools only. MCP stdio uses McpPermissionMode.
 	PermissionPolicy string `json:"permissionPolicy"`
+	// McpPermissionMode is external (default: MCP client owns user consent)
+	// or local (NodeShell NativeGate). Safety checks always remain in effect.
+	McpPermissionMode string `json:"mcpPermissionMode"`
 }
 
 // Defaults matches DEFAULT_SETTINGS in settings-store.ts, plus the agent
@@ -74,6 +78,7 @@ var Defaults = AppSettings{
 	AgentBaseURL:          "https://api.openai.com/v1",
 	AgentModel:            "gpt-4o-mini",
 	PermissionPolicy:      "ask",
+	McpPermissionMode:     string(permission.MCPModeExternal),
 }
 
 // Bounds from settings-store.ts.
@@ -117,6 +122,7 @@ type Patch struct {
 	AgentDefaultProviderID *string          `json:"agentDefaultProviderId"`
 	AgentDefaultModel      *string          `json:"agentDefaultModel"`
 	PermissionPolicy       *string          `json:"permissionPolicy"`
+	McpPermissionMode      *string          `json:"mcpPermissionMode"`
 }
 
 // Error carries the stable config error code the frontend maps onto
@@ -147,6 +153,7 @@ type fileSettings struct {
 	AgentDefaultProviderID json.RawMessage `json:"agentDefaultProviderId"`
 	AgentDefaultModel      json.RawMessage `json:"agentDefaultModel"`
 	PermissionPolicy       json.RawMessage `json:"permissionPolicy"`
+	McpPermissionMode      json.RawMessage `json:"mcpPermissionMode"`
 	// rawWasObject is true when the file parsed as a JSON object. An array
 	// top-level yields defaults and must not synthesise a legacy provider.
 	rawWasObject bool
@@ -204,6 +211,7 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 		float64(current.TerminalFontSize), float64(current.McpIdleTimeoutMinutes),
 		float64(current.McpMaxSessions), current.ThemePreference
 	agentURL, agentModel, permPolicy := current.AgentBaseURL, current.AgentModel, current.PermissionPolicy
+	mcpPermMode := current.McpPermissionMode
 	providers := current.AgentProviders
 	defaultID, defaultModel := current.AgentDefaultProviderID, current.AgentDefaultModel
 	if patch.Language != nil {
@@ -242,6 +250,9 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 	if patch.PermissionPolicy != nil {
 		permPolicy = *patch.PermissionPolicy
 	}
+	if patch.McpPermissionMode != nil {
+		mcpPermMode = *patch.McpPermissionMode
+	}
 	defaultID, defaultModel = normalizeAgentDefault(defaultID, defaultModel, providers)
 	next := AppSettings{
 		Language:               normalizeLanguage(lang),
@@ -257,6 +268,7 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 		AgentDefaultModel:      defaultModel,
 		AgentProvidersPresent:  true,
 		PermissionPolicy:       normalizePermissionPolicy(permPolicy),
+		McpPermissionMode:      normalizeMcpPermissionMode(mcpPermMode),
 	}
 	if next.AgentProviders == nil {
 		next.AgentProviders = []AgentProvider{}
@@ -711,5 +723,10 @@ func normalizeSettings(raw fileSettings) AppSettings {
 		AgentDefaultModel:      defaultModel,
 		AgentProvidersPresent:  present,
 		PermissionPolicy:       normalizePermissionPolicy(coerceString(raw.PermissionPolicy)),
+		McpPermissionMode:      normalizeMcpPermissionMode(coerceString(raw.McpPermissionMode)),
 	}
+}
+
+func normalizeMcpPermissionMode(value string) string {
+	return string(permission.ParseMCPMode(value))
 }

@@ -199,6 +199,8 @@ func (r *Runtime) CallWith(ctx context.Context, name string, args map[string]any
 		if err != nil {
 			return nil, toolArgError(name, err)
 		}
+		// User-consent only. MCP external mode has nil Auth and skips this
+		// prompt; RunCommand still validates the session, timeout and cancel.
 		if err := r.authorize(ctx, opts, name, sessionID, permission.Truncate(command), ""); err != nil {
 			return nil, err
 		}
@@ -244,6 +246,7 @@ func (r *Runtime) CallWith(ctx context.Context, name string, args map[string]any
 		if err := r.authorize(ctx, opts, name, sessionID, remotePath, detail); err != nil {
 			return nil, err
 		}
+		// SftpWrite still enforces the remote size cap and session lookup.
 		return r.SftpWrite(ctx, sessionID, remotePath, content)
 	case "sftp_upload":
 		sessionID, err := argString(args, "sessionId")
@@ -261,6 +264,7 @@ func (r *Runtime) CallWith(ctx context.Context, name string, args map[string]any
 		if err := r.authorize(ctx, opts, name, sessionID, localPath, remoteName); err != nil {
 			return nil, err
 		}
+		// SftpUpload still rejects paths outside the user home directory.
 		return r.SftpUpload(ctx, sessionID, localPath, remoteName)
 	case "sftp_download":
 		sessionID, err := argString(args, "sessionId")
@@ -278,6 +282,7 @@ func (r *Runtime) CallWith(ctx context.Context, name string, args map[string]any
 		if err := r.authorize(ctx, opts, name, sessionID, remotePath, localPath); err != nil {
 			return nil, err
 		}
+		// SftpDownload still rejects paths outside the user home directory.
 		return r.SftpDownload(ctx, sessionID, remotePath, localPath)
 	default:
 		return nil, &Error{Code: apperror.Unknown, Message: fmt.Sprintf("Unknown tool: %s", name)}

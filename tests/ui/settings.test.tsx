@@ -21,6 +21,7 @@ function makeProps(): ComponentProps<typeof SettingsModal> {
     terminalFontSize: 14,
     mcpIdleTimeoutMinutes: 10,
     mcpMaxSessions: 8,
+    mcpPermissionMode: 'external' as const,
     permissionPolicy: 'ask' as const,
     onLanguageChange: vi.fn(),
     onThemePreferenceChange: vi.fn(),
@@ -28,6 +29,7 @@ function makeProps(): ComponentProps<typeof SettingsModal> {
     onTerminalFontSizeChange: vi.fn(),
     onMcpIdleTimeoutMinutesChange: vi.fn(),
     onMcpMaxSessionsChange: vi.fn(),
+    onMcpPermissionModeChange: vi.fn(),
     onPermissionPolicyChange: vi.fn(),
     onClose: vi.fn()
   }
@@ -142,6 +144,32 @@ describe('SettingsModal language/theme/font', () => {
     await user.click(await screen.findByRole('option', { name: 'Dark' }))
 
     expect(props.onThemePreferenceChange).toHaveBeenCalledWith('dark')
+  })
+
+  it('labels GUI permission policy as applying only to the built-in assistant', async () => {
+    installFakeApi()
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'General')
+    expect(screen.getByLabelText('Sensitive operations')).toBeInTheDocument()
+    expect(screen.getByText(/Applies only to the built-in sidebar assistant/)).toBeInTheDocument()
+  })
+})
+
+describe('SettingsModal MCP permission mode', () => {
+  it('defaults to external and can switch to local', async () => {
+    installFakeApi()
+    const props = makeProps()
+    renderWithI18n(<SettingsModal {...props} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'MCP')
+
+    expect(screen.getByLabelText('MCP tool confirmation')).toBeInTheDocument()
+    expect(screen.getByText(/The MCP client/)).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('MCP tool confirmation'))
+    await user.click(await screen.findByRole('option', { name: 'NodeShell system prompt' }))
+    expect(props.onMcpPermissionModeChange).toHaveBeenCalledWith('local')
   })
 })
 
