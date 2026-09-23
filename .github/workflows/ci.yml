@@ -54,6 +54,7 @@ jobs:
             artifact-path: |
               build/bin/*.AppImage
               build/bin/*.deb
+              build/bin/*.rpm
               build/bin/*.pkg.tar.zst
               build/bin/nodeshell
     # Secrets cannot be referenced inside step-level `if:` conditions (GitHub Actions
@@ -237,7 +238,7 @@ jobs:
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$DMG"
 
-      - name: Package Linux AppImage and deb
+      - name: Package Linux AppImage, deb and rpm
         if: matrix.platform == 'linux'
         run: bash scripts/package-linux.sh build/bin/nodeshell build/bin "NodeShell-${{ env.APP_VERSION }}-linux-amd64" amd64 "${{ env.APP_VERSION }}"
 
@@ -307,4 +308,4 @@ jobs:
           draft: true
           generate_release_notes: true
           body: |
-            Snap packaging is not included in this release; it will be restored once the Wails packaging chain is reproducible. Linux AppImage and .deb are provided.
+            Snap packaging is not included in this release; it will be restored once the Wails packaging chain is reproducible. Linux AppImage, .deb, .rpm and .pkg.tar.zst are provided.
