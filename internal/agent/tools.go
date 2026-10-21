@@ -25,90 +25,13 @@ const (
 // maxListEntries bounds one directory listing put into the transcript.
 const maxListEntries = 200
 
-// toolSpecs advertises the tool surface. Schemas stay minimal on purpose:
-// every value is validated again on execution, and the remote limits (exec
-// output cap, file size cap) are enforced by the underlying MCP runtime.
-func toolSpecs() []toolSpec {
-	return []toolSpec{
-		{
-			Type: "function",
-			Function: functionSpec{
-				Name: toolBash,
-				Description: "Run a non-interactive shell command on the remote host over SSH. " +
-					"There is no TTY: commands cannot prompt, page or read stdin.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"command": map[string]any{
-							"type":        "string",
-							"description": "Shell command to run on the remote host",
-						},
-						"timeoutMs": map[string]any{
-							"type":        "integer",
-							"description": "Optional timeout in milliseconds",
-						},
-					},
-					"required": []any{"command"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: functionSpec{
-				Name:        toolSftpList,
-				Description: "List a directory on the remote host. Without a path, lists the session's current directory.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"path": map[string]any{
-							"type":        "string",
-							"description": "Remote directory path, absolute or relative to the current directory",
-						},
-					},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: functionSpec{
-				Name:        toolSftpRead,
-				Description: fmt.Sprintf("Read a remote text file (max %d KiB).", MaxFileBytes/1024),
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"path": map[string]any{"type": "string", "description": "Remote file path"},
-					},
-					"required": []any{"path"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: functionSpec{
-				Name: toolSftpWrite,
-				Description: fmt.Sprintf("Write UTF-8 text to a remote file, replacing its contents (max %d KiB).",
-					MaxFileBytes/1024),
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"path":    map[string]any{"type": "string", "description": "Remote file path"},
-						"content": map[string]any{"type": "string", "description": "Full new file contents"},
-					},
-					"required": []any{"path", "content"},
-				},
-			},
-		},
-	}
-}
-
-// runTool executes one tool call against the session. It returns the content
-// to append to the transcript, a short display summary for the UI, and
-// whether the call succeeded. A failure is never fatal to the run: the error
-// text goes back to the model so it can correct itself, exactly like a failed
-// command in a terminal.
-func (s *Service) runTool(ctx context.Context, sessionID, title string, call toolCall) (string, string, bool) {
-	name := call.Function.Name
-	args, err := decodeArgsMap(call.Function.Arguments)
+// invokeTool executes one tool call against the session. It returns the
+// content to append to the transcript, a short display summary for the UI,
+// and whether the call succeeded. A failure is never fatal to the run: the
+// error text goes back to the model so it can correct itself, exactly like a
+// failed command in a terminal.
+func (s *Service) invokeTool(ctx context.Context, sessionID, title, name, argumentsJSON string) (string, string, bool) {
+	args, err := decodeArgsMap(argumentsJSON)
 	if err != nil {
 		return toolError(err), name, false
 	}
@@ -149,8 +72,8 @@ func (s *Service) commandTimeout(ms int64) time.Duration {
 	return d
 }
 
-// decodeArgsMap parses the streamed argument JSON. Empty arguments are treated
-// as an empty object, which some providers send for a no-parameter call.
+// decodeArgsMap parses the tool arguments. Empty arguments are treated as an
+// empty object, which some providers send for a no-parameter call.
 func decodeArgsMap(raw string) (map[string]any, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -193,6 +116,7 @@ func stringFromArgs(args map[string]any, key string) string {
 	return s
 }
 
+// toolSummary is the short, display-ready line for one tool call.
 func toolSummary(name string, args map[string]any) string {
 	switch name {
 	case toolBash:
@@ -210,6 +134,7 @@ func toolSummary(name string, args map[string]any) string {
 	}
 }
 
+// formatToolResult renders a successful tool result for the model.
 func formatToolResult(name string, args map[string]any, result any) string {
 	switch name {
 	case toolBash:
