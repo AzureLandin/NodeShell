@@ -1,7 +1,7 @@
 # NodeShell Agent 供应商模型 ID 编辑器美化：实施与验收报告
 
 - **报告日期**：2026-08-26
-- **关联计划**：[Agent供应商模型ID编辑器美化_设计与实施计划.md](file:///e:/Projects/NodeShell/reports/Agent%E4%BE%9B%E5%BA%94%E5%95%86%E6%A8%A1%E5%9E%8BID%E7%BC%96%E8%BE%91%E5%99%A8%E7%BE%8E%E5%8C%96_%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92.md)
+- **关联计划**：[Agent供应商模型ID编辑器美化_设计与实施计划.md](Agent供应商模型ID编辑器美化_设计与实施计划.md)
 - **实施状态**：编辑器核心功能验收通过；整体验收为**有条件通过**（全量测试存在 2 项非编辑器失败，视觉实机项待执行）
 - **影响范围**：设置页（SettingsModal）-> Agent -> 供应商配置 -> 模型 ID 录入与编辑区域
 

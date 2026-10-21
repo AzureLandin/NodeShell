@@ -291,9 +291,9 @@ CI 会在 Windows、macOS 和 Linux 原生 runner 上执行类型检查、前端
 
 ```text
 .
-├── app.go                       # Wails 应用 facade 与领域服务绑定
-├── main.go                      # GUI / --mcp 双入口
+├── main.go                      # GUI / --mcp 双入口与 Wails 窗口启动
 ├── internal/
+│   ├── app/                     # Wails 应用 facade 与领域服务绑定
 │   ├── agent/                   # 内置 Agent 服务
 │   ├── credentials/             # 凭据与 Keyring 抽象
 │   ├── hosts/                   # 主机配置存储
@@ -310,7 +310,9 @@ CI 会在 Windows、macOS 和 Linux 原生 runner 上执行类型检查、前端
 │   └── ...
 ├── scripts/                     # MCP smoke test 和平台打包脚本
 ├── tests/                       # 前端和适配层测试
-├── docs/                        # 设计与重构文档
+├── docs/
+│   ├── design/                  # 重构设计文档
+│   └── reports/                 # 历史实施与验收报告（按功能域分类）
 └── wails.json                   # Wails 构建配置
 ```
 

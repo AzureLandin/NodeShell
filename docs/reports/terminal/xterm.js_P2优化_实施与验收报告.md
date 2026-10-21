@@ -83,8 +83,8 @@ go test -bench=BenchmarkBatcherSustainedHighRate -benchtime=5m ./internal/sessio
 | `tests/ui/terminal-stress.ts` | 新增 | 前端压力语料 |
 | `tests/ui/terminal-view-resize.test.tsx` | 修改 | 大块分帧、WebGL 不重试、后台写入、8 会话、指标 |
 | `tests/ui/session-terminal-persistence.test.tsx` | 修改 | 重连替换实例、重复关闭幂等 |
-| `reports/xterm.js_P2优化_性能基线.md` | 新增 | 基准数字 |
-| `reports/xterm.js_P2优化_实施与验收报告.md` | 新增 | 本报告 |
+| `docs/reports/terminal/xterm.js_P2优化_性能基线.md` | 新增 | 基准数字 |
+| `docs/reports/terminal/xterm.js_P2优化_实施与验收报告.md` | 新增 | 本报告 |
 
 未修改 SSH/PTY 类型、`sessions.write` / `sessions.resize` / `session:data` 契约、SFTP、Agent、端口映射。
 

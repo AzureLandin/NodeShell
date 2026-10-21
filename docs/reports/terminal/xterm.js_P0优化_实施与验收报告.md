@@ -1,7 +1,7 @@
 # xterm.js P0 稳定性与性能优化：实施与验收报告
 
 - **实施日期**：2026-08-30
-- **关联计划**：[xterm.js_P0优化_编程Agent实施计划.md](file:///E:/Projects/NodeShell/reports/xterm.js_P0优化_编程Agent实施计划.md)
+- **关联计划**：[xterm.js_P0优化_编程Agent实施计划.md](xterm.js_P0优化_编程Agent实施计划.md)
 - **状态**：**正式验收全部通过 (PASS)**
 
 ---
@@ -11,7 +11,7 @@
 针对最新代码评审提出的晚连接路径 worker 泄漏防范、有界队列背压控制与文档/测试规范，完成了全面闭环：
 
 ### 1.1 晚连接路径 Batcher Worker 泄漏修复 (P1 修复)
-- 在 [`internal/sessions/sessions.go`](file:///E:/Projects/NodeShell/internal/sessions/sessions.go) 的 `Connect()` 方法中，当在连接握手完成后检测到 `m.closing == true`（即应用已执行 `DisposeAll` 正在退出）时：
+- 在 [`internal/sessions/sessions.go`](../../../internal/sessions/sessions.go) 的 `Connect()` 方法中，当在连接握手完成后检测到 `m.closing == true`（即应用已执行 `DisposeAll` 正在退出）时：
   ```go
   m.mu.Lock()
   if m.closing {
@@ -26,7 +26,7 @@
 - **测试覆盖**：在 `internal/sessions/sessions_test.go` 中新增 `TestConnectDuringDisposeAllWorkerExits`，验证在 DisposeAll 竞态下返回 Cancelled 错误且 batcher worker 正常退出。
 
 ### 1.2 有界背压队列与内存上限控制 (P1/P2 优化)
-- 在 [`internal/sessions/batcher.go`](file:///E:/Projects/NodeShell/internal/sessions/batcher.go) 中引入常量 `maxQueueBatches = 64`（单会话最大缓冲约 3MB 批次）：
+- 在 [`internal/sessions/batcher.go`](../../../internal/sessions/batcher.go) 中引入常量 `maxQueueBatches = 64`（单会话最大缓冲约 3MB 批次）：
   - 当高速输出（如 `cat` 大文件）导致 `queue` 达到容量上限时，`Add()` 阻塞在 `b.cond.Wait()` 上；
   - 从而自然暂停 SSH 输出泵（`conn.Stdout().Read()`），通过 TCP 窗口滑动反压向远程服务端限速，彻底防止前端慢消费场景下的内存无界膨胀；
   - 当 worker 消费批次或执行 `Close()` / `Discard()` 时广播 `b.cond.Broadcast()`，解除阻塞；

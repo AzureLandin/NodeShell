@@ -98,7 +98,7 @@ GUI 与 MCP 是两个进程。MCP 不读取 GUI 内存中的 allow-session；loc
 | `src/renderer/src/components/SettingsModal.tsx` | MCP 页独立选项；GUI 权限文案拆开 |
 | `src/renderer/src/i18n/locales/{en,zh}.json` | 中英文案 |
 | `tests/ui/settings.test.tsx` | 默认 external、切换 local、GUI 权限文案 |
-| `reports/MCP权限外置化_实施与验收报告.md` | 本报告 |
+| `docs/reports/mcp/MCP权限外置化_实施与验收报告.md` | 本报告 |
 
 未改 P2 终端相关未提交文件。
 

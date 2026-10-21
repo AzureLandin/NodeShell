@@ -1,7 +1,7 @@
 # NodeShell Agent 单次 Prompt 工具调用不限：修复与验收报告
 
 - **报告日期**：2026-08-26
-- **关联计划**：[Agent单次Prompt工具调用不限_实现说明与修改计划.md](file:///e:/Projects/NodeShell/reports/Agent%E5%8D%95%E6%AC%A1Prompt%E5%B7%A5%E5%85%B7%E8%B0%83%E7%94%A8%E4%B8%8D%E9%99%90_%E5%AE%9E%E7%8E%B0%E8%AF%B4%E6%98%8E%E4%B8%8E%E4%BF%AE%E6%94%B9%E8%AE%A1%E5%88%92.md)
+- **关联计划**：[Agent单次Prompt工具调用不限_实现说明与修改计划.md](Agent单次Prompt工具调用不限_实现说明与修改计划.md)
 - **修复状态**：已完成并通过全套前端与后端自动化测试验证（100% PASS）
 - **影响组件**：后端 Agent 服务循环（`internal/agent`）
 
@@ -24,7 +24,7 @@ Agent stopped after 8 steps without finishing
 
 ## 2. 修复方案与代码变更
 
-### 2.1 取消生产环境 `DefaultMaxTurns = 8` 硬编码限制 ([`internal/agent/agent.go`](file:///e:/Projects/NodeShell/internal/agent/agent.go))
+### 2.1 取消生产环境 `DefaultMaxTurns = 8` 硬编码限制 ([`internal/agent/agent.go`](../../../internal/agent/agent.go))
 
 1. **移除常量**：彻底删除了 `DefaultMaxTurns = 8`。
 2. **重定义 `MaxTurns` 语义**：
@@ -50,7 +50,7 @@ Agent stopped after 8 steps without finishing
 
 ---
 
-### 2.2 新增与调整后端测试 ([`internal/agent/agent_test.go`](file:///e:/Projects/NodeShell/internal/agent/agent_test.go))
+### 2.2 新增与调整后端测试 ([`internal/agent/agent_test.go`](../../../internal/agent/agent_test.go))
 
 1. **新增长任务测试 `TestDefaultRunCanExceedEightToolTurnsAndFinish`**：
    - 构造连续 12 轮工具调用 + 第 13 轮返回最终文本的 SSE 序列；
