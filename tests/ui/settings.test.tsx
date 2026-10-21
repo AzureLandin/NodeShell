@@ -283,14 +283,20 @@ describe('SettingsModal MCP registration', () => {
     const preview = screen.getByLabelText('Config preview')
     expect(preview).toHaveValue('{"mcpServers":{"nodeshell":{}}}')
 
+    // Each snippet format lives in its own tab panel, so the preview element
+    // is re-created when the active format changes.
     await user.click(screen.getByRole('tab', { name: 'VS Code' }))
-    expect(preview).toHaveValue('{"servers":{"nodeshell":{"type":"stdio"}}}')
+    expect(screen.getByLabelText('Config preview')).toHaveValue(
+      '{"servers":{"nodeshell":{"type":"stdio"}}}'
+    )
 
     await user.click(screen.getByRole('tab', { name: 'OpenCode' }))
-    expect(preview).toHaveValue('{"mcp":{"nodeshell":{"type":"local"}}}')
+    expect(screen.getByLabelText('Config preview')).toHaveValue(
+      '{"mcp":{"nodeshell":{"type":"local"}}}'
+    )
 
     await user.click(screen.getByRole('tab', { name: 'Codex' }))
-    expect(preview).toHaveValue('[mcp_servers.nodeshell]')
+    expect(screen.getByLabelText('Config preview')).toHaveValue('[mcp_servers.nodeshell]')
   })
 
   it('copies the selected snippet format', async () => {
@@ -588,7 +594,7 @@ describe('SettingsModal agent runtime', () => {
 
     const contextWindow = await screen.findByLabelText('Context window (estimated tokens)')
     await waitFor(() => expect(contextWindow).toBeEnabled())
-    expect(contextWindow).toHaveValue(32768)
+    expect(contextWindow).toHaveValue('32768')
     expect(screen.getByLabelText('Thinking strength')).toHaveTextContent('Medium')
     expect(screen.getByLabelText('Context compression')).toHaveTextContent('Automatic')
     expect(screen.getByText(/0 means unlimited/)).toBeInTheDocument()

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import type { AuthMethod, HostInput } from '../../../shared/types'
+import { FormField } from '../ui/field'
+import { Input } from '../ui/input'
 import { PasswordField } from './PasswordField'
 import { Select } from './Select'
 
@@ -91,9 +93,8 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
       <div className="host-form-body">
         <div className="form-section">
           <h4 className="form-section-title">{t('hostsPicker.basicInfo')}</h4>
-          <label className="form-field">
-            <span>{t('form.name')}</span>
-            <input
+          <FormField label={t('form.name')}>
+            <Input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -101,12 +102,11 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
               autoFocus
               disabled={submitting}
             />
-          </label>
+          </FormField>
 
           <div className="form-grid-2col">
-            <label className="form-field form-field-host">
-              <span>{t('form.host')}</span>
-              <input
+            <FormField label={t('form.host')} className="form-field form-field-host">
+              <Input
                 type="text"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
@@ -114,11 +114,10 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
                 placeholder="example.com"
                 disabled={submitting}
               />
-            </label>
+            </FormField>
 
-            <label className="form-field form-field-port">
-              <span>{t('form.port')}</span>
-              <input
+            <FormField label={t('form.port')} className="form-field form-field-port">
+              <Input
                 type="number"
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
@@ -127,25 +126,23 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
                 max={65535}
                 disabled={submitting}
               />
-            </label>
+            </FormField>
           </div>
 
-          <label className="form-field">
-            <span>{t('form.username')}</span>
-            <input
+          <FormField label={t('form.username')}>
+            <Input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
               disabled={submitting}
             />
-          </label>
+          </FormField>
         </div>
 
         <div className="form-section">
           <h4 className="form-section-title">{t('hostsPicker.authConfig')}</h4>
-          <div className="form-field">
-            <span>{t('form.auth')}</span>
+          <FormField label={t('form.auth')}>
             <Select
               value={authMethod}
               onChange={(v) => {
@@ -158,7 +155,7 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
                 { value: 'privateKey', label: t('form.privateKey') }
               ]}
             />
-          </div>
+          </FormField>
 
           {authMethod === 'password' && (
             <PasswordField
@@ -177,10 +174,9 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
           )}
 
           {authMethod === 'privateKey' && (
-            <label className="form-field">
-              <span>{t('form.privateKeyPath')}</span>
+            <FormField label={t('form.privateKeyPath')}>
               <div className="form-field-row">
-                <input
+                <Input
                   type="text"
                   value={privateKeyPath}
                   onChange={(e) => {
@@ -203,7 +199,7 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
                   <span>{t('form.browse')}</span>
                 </button>
               </div>
-            </label>
+            </FormField>
           )}
         </div>
 
@@ -215,20 +211,11 @@ export function HostForm({ initial, onSubmit, onCancel }: HostFormProps): React.
       </div>
 
       <div className="host-form-actions-bar">
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={onCancel}
-          disabled={submitting}
-        >
+        <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>
           {t('form.cancel')}
         </button>
         <button type="submit" className="btn-primary" disabled={submitting}>
-          {submitting
-            ? t('form.saving')
-            : isEdit
-              ? t('form.save')
-              : t('form.createAndConnect')}
+          {submitting ? t('form.saving') : isEdit ? t('form.save') : t('form.createAndConnect')}
         </button>
       </div>
     </form>
