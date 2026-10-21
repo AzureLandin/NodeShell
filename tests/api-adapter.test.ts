@@ -740,6 +740,29 @@ describe('api adapter observable failures', () => {
   })
 })
 
+describe('WailsBridge binding namespace', () => {
+  const originalWindow = (globalThis as { window?: unknown }).window
+
+  afterEach(() => {
+    if (originalWindow === undefined) {
+      delete (globalThis as { window?: unknown }).window
+    } else {
+      ;(globalThis as { window: unknown }).window = originalWindow
+    }
+  })
+
+  it('calls the App facade under window.go.app', async () => {
+    const hostsList = vi.fn().mockResolvedValue([])
+    ;(globalThis as { window?: unknown }).window = {
+      go: { app: { App: { HostsList: hostsList } } }
+    }
+
+    const bridge = new WailsBridge()
+    await expect(bridge.call('HostsList')).resolves.toEqual([])
+    expect(hostsList).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('WailsBridge against a bare node environment', () => {
   it('fails explicitly with NOT_IMPLEMENTED when generated bindings are absent', async () => {
     const bridge = new WailsBridge()

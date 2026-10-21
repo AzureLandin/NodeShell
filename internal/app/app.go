@@ -1,4 +1,6 @@
-package main
+// Package app wires the Wails-bound application facade to NodeShell's domain
+// services. It is the only internal package that imports the Wails runtime.
+package app
 
 import (
 	"context"
@@ -307,6 +309,20 @@ func boolPtr(b bool) *bool { return &b }
 // error the caller is about to return is never replaced.
 func logRollbackFailure(err error) {
 	fmt.Fprintf(os.Stderr, "nodeshell: failed to restore previous credentials: %v\n", err)
+}
+
+// Start runs startup wiring for a Wails-created App. It is a package function
+// rather than a method so Wails does not expose lifecycle control to the
+// frontend.
+func Start(a *App, ctx context.Context) {
+	a.startup(ctx)
+}
+
+// Stop runs shutdown cleanup for a Wails-created App. It is a package function
+// rather than a method so Wails does not expose lifecycle control to the
+// frontend.
+func Stop(a *App, ctx context.Context) {
+	a.shutdown(ctx)
 }
 
 // startup is invoked by Wails once the WebView is initialised. It resolves
@@ -1500,7 +1516,7 @@ func (a *App) DialogOpenPrivateKeyFile() (string, error) {
 // appVersion is the version shown on the About page. Keep it in sync with
 // wails.json info.productVersion and package.json version (enforced by
 // TestAppVersionMatchesManifests); a build can override it with
-// -ldflags "-X main.appVersion=...".
+// -ldflags "-X nodeshell/internal/app.appVersion=...".
 var appVersion = "2.1.0"
 
 // FontsList returns the system font families for the Settings modal. The

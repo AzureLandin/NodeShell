@@ -1,10 +1,11 @@
-package main
+package app
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -76,7 +77,10 @@ func TestAppVersionMatchesManifests(t *testing.T) {
 	var pkgCfg struct {
 		Version string `json:"version"`
 	}
-	for file, v := range map[string]any{"wails.json": &wailsCfg, "package.json": &pkgCfg} {
+	for file, v := range map[string]any{
+		filepath.Join("..", "..", "wails.json"):   &wailsCfg,
+		filepath.Join("..", "..", "package.json"): &pkgCfg,
+	} {
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)
