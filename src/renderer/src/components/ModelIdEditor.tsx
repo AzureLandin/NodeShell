@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { Button } from '../ui/button'
+import { FormFieldRoot } from '../ui/field'
+import { Input } from '../ui/input'
 
 export const DEFAULT_MAX_ITEMS = 32
 export const DEFAULT_MAX_ITEM_LENGTH = 512
@@ -115,39 +118,39 @@ export function ModelIdEditor({
   const isLimitReached = value.length >= maxItems
 
   return (
-    <div
-      className={`model-id-editor${disabled ? ' is-disabled' : ''}${error ? ' has-error' : ''}`}
-    >
-      <div className="model-id-editor-box">
+    <div className={`model-id-editor${disabled ? ' is-disabled' : ''}${error ? ' has-error' : ''}`}>
+      <FormFieldRoot className="model-id-editor-box" invalid={Boolean(error)}>
         {value.length > 0 && (
           <div className="model-id-editor-list" role="list">
             {value.map((model, index) => (
-              <span key={`${model}-${index}`} className="model-id-chip" role="listitem" title={model}>
+              <span
+                key={`${model}-${index}`}
+                className="model-id-chip"
+                role="listitem"
+                title={model}
+              >
                 <span className="model-id-chip-label">{model}</span>
-                <button
-                  type="button"
+                <Button
                   className="model-id-chip-remove"
                   disabled={disabled}
                   aria-label={t('settings.agentModelRemove', { model })}
                   onClick={() => removeModel(index)}
                 >
                   <FontAwesomeIcon icon={faXmark} aria-hidden />
-                </button>
+                </Button>
               </span>
             ))}
           </div>
         )}
 
         <div className="model-id-editor-input-row">
-          <input
+          <Input
             type="text"
             className="model-id-editor-input"
             value={input}
             disabled={disabled || isLimitReached}
             placeholder={
-              isLimitReached
-                ? t('settings.agentModelsLimit')
-                : t('settings.agentModelPlaceholder')
+              isLimitReached ? t('settings.agentModelsLimit') : t('settings.agentModelPlaceholder')
             }
             aria-label={ariaLabel ?? t('settings.agentModels')}
             onChange={(e) => {
@@ -159,8 +162,7 @@ export function ModelIdEditor({
             onPaste={handlePaste}
             spellCheck={false}
           />
-          <button
-            type="button"
+          <Button
             className="model-id-editor-add-btn"
             disabled={disabled || !input.trim() || isLimitReached}
             aria-label={t('settings.agentModelAdd')}
@@ -168,9 +170,9 @@ export function ModelIdEditor({
             onClick={() => addTokens(input)}
           >
             <FontAwesomeIcon icon={faPlus} aria-hidden />
-          </button>
+          </Button>
         </div>
-      </div>
+      </FormFieldRoot>
 
       <div className="model-id-editor-meta">
         <span className={`model-id-editor-hint${error ? ' is-error' : ''}`}>

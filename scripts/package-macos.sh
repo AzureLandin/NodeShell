@@ -13,5 +13,22 @@ fi
 # ZIP
 ditto -c -k --keepParent "$bin" "$out/$name.zip"
 # DMG
-hdiutil create -volname "NodeShell" -srcfolder "$bin" -ov -format UDZO "$out/$name.dmg"
-echo "Packaged $name: $out/$name.zip $out/$name.dmg"
+# hdiutil occasionally reports "Resource busy" on shared macOS runners.
+# Retry after detaching a stale mount and removing the partial image.
+dmg="$out/$name.dmg"
+created=0
+for attempt in 1 2 3; do
+  rm -f "$dmg"
+  if hdiutil create -volname "NodeShell" -srcfolder "$bin" -ov -format UDZO "$dmg"; then
+    created=1
+    break
+  fi
+  echo "hdiutil create failed (attempt $attempt), retrying..." >&2
+  hdiutil detach "/Volumes/NodeShell" 2>/dev/null || true
+  sleep 2
+done
+if [ "$created" -ne 1 ]; then
+  echo "failed to create $dmg" >&2
+  exit 1
+fi
+echo "Packaged $name: $out/$name.zip $dmg"

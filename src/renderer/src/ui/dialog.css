@@ -1,0 +1,22 @@
+/*
+ * Scoped styles for the Base UI dialog markup.
+ *
+ * Base UI splits a dialog into Backdrop → Viewport → Popup, while the app
+ * styles the overlay (`.modal-overlay`) and the sheet (`.modal`) from
+ * App.css. The viewport is the new element in between: it only positions the
+ * popup inside the overlay, so it stays unstyled apart from that.
+ *
+ * The enter/exit animation is not styled here: Base UI reports the phase
+ * (`data-starting-style` / `data-ending-style`) through its part state, and
+ * ModalShell maps that phase onto the legacy `.is-open` / `.is-closing`
+ * classes that App.css animates. App.css therefore stays the single source
+ * of truth for the motion, and no duplicate rules are needed.
+ */
+
+.modal-viewport {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

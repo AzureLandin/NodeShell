@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -20,175 +19,115 @@ import {
   useTransferTasks,
   type TransferTaskWithMetrics
 } from '../hooks/useTransferTasks'
+import { PopoverClose, PopoverRoot, PopoverSurface, PopoverTrigger } from '../ui/popover'
 
 export function TransferCenter(): React.JSX.Element {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
-  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({})
-  const panelRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const { tasks, activeCount, cancellingIds, cancel, retry, clear, clearCompleted } =
     useTransferTasks(isOpen || isHovered)
 
-  const updatePosition = useCallback(() => {
-    if (!triggerRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
-    const top = rect.bottom + 6
-    const right = Math.max(12, window.innerWidth - rect.right)
-    const maxWidth = Math.min(420, window.innerWidth - 24)
-    setPopoverStyle({
-      position: 'fixed',
-      top: `${top}px`,
-      right: `${right}px`,
-      maxWidth: `${maxWidth}px`,
-      zIndex: 10000
-    })
+  const handleOpenChange = useCallback((open: boolean): void => {
+    setIsOpen(open)
   }, [])
 
-  // Reposition on window resize or scroll
-  useEffect(() => {
-    if (!isOpen) return
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [isOpen, updatePosition])
-
-  // Close on Escape or click outside
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        setIsOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-
-    const handleClickOutside = (e: MouseEvent): void => {
-      const target = e.target as Node
-      if (
-        panelRef.current &&
-        !panelRef.current.contains(target) &&
-        triggerRef.current &&
-        !triggerRef.current.contains(target)
-      ) {
-        setIsOpen(false)
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isOpen])
-
   const hasCompleted = tasks.some(
-    (task) =>
-      task.state === 'succeeded' || task.state === 'failed' || task.state === 'cancelled'
+    (task) => task.state === 'succeeded' || task.state === 'failed' || task.state === 'cancelled'
   )
 
   return (
-    <div className="transfer-center-anchor">
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`session-tab-btn session-transfer-toggle${isOpen ? ' is-active' : ''}`}
-        aria-label={isOpen ? t('transfer.close') : t('transfer.open')}
-        title={t('transfer.title')}
-        aria-expanded={isOpen}
-        onClick={() => setIsOpen((v) => !v)}
+    <PopoverRoot open={isOpen} onOpenChange={handleOpenChange}>
+      <div className="transfer-center-anchor">
+        <PopoverTrigger
+          className={`session-tab-btn session-transfer-toggle${isOpen ? ' is-active' : ''}`}
+          aria-label={isOpen ? t('transfer.close') : t('transfer.open')}
+          title={t('transfer.title')}
+        >
+          <FontAwesomeIcon icon={faRightLeft} className="session-transfer-icon" aria-hidden />
+          <span className="session-transfer-label">{t('transfer.toggle')}</span>
+          {activeCount > 0 && (
+            <span
+              className="session-transfer-badge"
+              aria-label={t('transfer.activeCount', { count: activeCount })}
+            >
+              {activeCount > 99 ? '99+' : activeCount}
+            </span>
+          )}
+        </PopoverTrigger>
+      </div>
+
+      <PopoverSurface
+        className="transfer-center-popover glass"
+        side="bottom"
+        align="end"
+        sideOffset={6}
+        positionMethod="fixed"
+        collisionPadding={12}
+        popupProps={{
+          role: 'region',
+          'aria-label': t('transfer.title'),
+          onMouseEnter: () => setIsHovered(true),
+          onMouseLeave: () => setIsHovered(false),
+          onFocus: () => setIsHovered(true),
+          onBlur: (event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setIsHovered(false)
+            }
+          }
+        }}
       >
-        <FontAwesomeIcon icon={faRightLeft} className="session-transfer-icon" aria-hidden />
-        <span className="session-transfer-label">{t('transfer.toggle')}</span>
-        {activeCount > 0 && (
-          <span className="session-transfer-badge" aria-label={t('transfer.activeCount', { count: activeCount })}>
-            {activeCount > 99 ? '99+' : activeCount}
-          </span>
-        )}
-      </button>
+        <div className="transfer-center-header">
+          <div className="transfer-center-title-row">
+            <span className="transfer-center-title">{t('transfer.title')}</span>
+            {activeCount > 0 && (
+              <span className="transfer-center-active-tag">
+                {t('transfer.activeCount', { count: activeCount })}
+              </span>
+            )}
+          </div>
+          <div className="transfer-center-header-actions">
+            {hasCompleted && (
+              <button
+                type="button"
+                className="transfer-btn-text"
+                onClick={() => void clearCompleted()}
+                title={t('transfer.clearCompleted')}
+              >
+                <FontAwesomeIcon icon={faTrashCan} aria-hidden />
+                <span>{t('transfer.clearCompleted')}</span>
+              </button>
+            )}
+            <PopoverClose className="transfer-btn-close" aria-label={t('transfer.close')}>
+              <FontAwesomeIcon icon={faXmark} aria-hidden />
+            </PopoverClose>
+          </div>
+        </div>
 
-      {isOpen &&
-        createPortal(
-          <div
-            ref={panelRef}
-            className="transfer-center-popover glass"
-            style={popoverStyle}
-            role="region"
-            aria-label={t('transfer.title')}
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            onFocus={() => setIsHovered(true)}
-            onBlur={(e) => {
-              if (!panelRef.current?.contains(e.relatedTarget as Node)) {
-                setIsHovered(false)
-              }
-            }}
-          >
-            <div className="transfer-center-header">
-              <div className="transfer-center-title-row">
-                <span className="transfer-center-title">{t('transfer.title')}</span>
-                {activeCount > 0 && (
-                  <span className="transfer-center-active-tag">
-                    {t('transfer.activeCount', { count: activeCount })}
-                  </span>
-                )}
-              </div>
-              <div className="transfer-center-header-actions">
-                {hasCompleted && (
-                  <button
-                    type="button"
-                    className="transfer-btn-text"
-                    onClick={() => void clearCompleted()}
-                    title={t('transfer.clearCompleted')}
-                  >
-                    <FontAwesomeIcon icon={faTrashCan} aria-hidden />
-                    <span>{t('transfer.clearCompleted')}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="transfer-btn-close"
-                  aria-label={t('transfer.close')}
-                  onClick={() => setIsOpen(false)}
-                >
-                  <FontAwesomeIcon icon={faXmark} aria-hidden />
-                </button>
-              </div>
+        <div className="transfer-center-body">
+          {tasks.length === 0 ? (
+            <div className="transfer-center-empty">
+              <FontAwesomeIcon icon={faRightLeft} className="transfer-empty-icon" aria-hidden />
+              <p>{t('transfer.empty')}</p>
             </div>
-
-            <div className="transfer-center-body">
-              {tasks.length === 0 ? (
-                <div className="transfer-center-empty">
-                  <FontAwesomeIcon icon={faRightLeft} className="transfer-empty-icon" aria-hidden />
-                  <p>{t('transfer.empty')}</p>
-                </div>
-              ) : (
-                <ul className="transfer-task-list">
-                  {tasks.map((task) => (
-                    <TransferTaskCard
-                      key={task.taskId}
-                      task={task}
-                      isCancelling={cancellingIds.has(task.taskId)}
-                      onCancel={() => void cancel(task.taskId)}
-                      onRetry={() => void retry(task.taskId)}
-                      onClear={() => void clear(task.taskId)}
-                    />
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>,
-          document.body
-        )}
-    </div>
+          ) : (
+            <ul className="transfer-task-list">
+              {tasks.map((task) => (
+                <TransferTaskCard
+                  key={task.taskId}
+                  task={task}
+                  isCancelling={cancellingIds.has(task.taskId)}
+                  onCancel={() => void cancel(task.taskId)}
+                  onRetry={() => void retry(task.taskId)}
+                  onClear={() => void clear(task.taskId)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </PopoverSurface>
+    </PopoverRoot>
   )
 }
 

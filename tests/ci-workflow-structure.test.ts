@@ -92,9 +92,13 @@ describe('CI packaging', () => {
     expect(ci).toMatch(/ditto|zip|\.zip/)
   })
 
-  it('Linux job produces AppImage and deb', () => {
+  it('Linux job produces AppImage, deb, pacman and rpm packages', () => {
     expect(ci).toMatch(/appimagetool|AppImage/)
     expect(ci).toMatch(/nfpm|\.deb/)
+    expect(ci).toContain('build/bin/*.rpm')
+    expect(ci).toContain('build/bin/*.pkg.tar.zst')
+    expect(ci).toContain('Verify Linux package artifacts')
+    expect(ci).toContain('for ext in AppImage deb rpm pkg.tar.zst')
   })
 
   it('never references secrets inside step-level if conditions', () => {
@@ -198,6 +202,11 @@ describe('packaging scripts', () => {
 
   it('package-macos.sh applies hardened runtime when an identity is provided', () => {
     expect(macos).toContain('--options runtime')
+  })
+
+  it('package-macos.sh retries a busy hdiutil create and detaches a stale mount', () => {
+    expect(macos).toContain('for attempt in 1 2 3')
+    expect(macos).toContain('hdiutil detach "/Volumes/NodeShell"')
   })
 
   it('package-linux.sh takes the version as a parameter, not a hardcoded literal', () => {

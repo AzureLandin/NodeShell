@@ -238,9 +238,24 @@ jobs:
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$DMG"
 
-      - name: Package Linux AppImage, deb and rpm
+      - name: Package Linux AppImage, deb, pacman and rpm
         if: matrix.platform == 'linux'
         run: bash scripts/package-linux.sh build/bin/nodeshell build/bin "NodeShell-${{ env.APP_VERSION }}-linux-amd64" amd64 "${{ env.APP_VERSION }}"
+
+      - name: Verify Linux package artifacts
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="build/bin/NodeShell-${{ env.APP_VERSION }}-linux-amd64"
+          for ext in AppImage deb rpm pkg.tar.zst; do
+            test -s "$base.$ext" || {
+              echo "missing Linux package: $base.$ext" >&2
+              exit 1
+            }
+          done
+          echo "Linux packages present:"
+          ls -lh "$base".*
 
       - name: Sign Windows installer
         if: matrix.platform == 'windows' && env.WINDOWS_CERT_BASE64 != '' && env.WINDOWS_CERT_PASSWORD != ''

@@ -1,0 +1,116 @@
+/*
+ * Scoped styles for the Base UI form primitives.
+ *
+ * App.css still owns the shared look (colors, radii, `.form-field`,
+ * `.app-select-*`, `.mcp-format-tab`, ...). Everything in this file only
+ * covers the state attributes Base UI emits that the Radix-era selectors in
+ * App.css cannot express, plus the few Base UI specific layout variables.
+ * Keep the selectors scoped to data attributes so they never leak into
+ * unrelated markup.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Select (Base UI)
+ * ------------------------------------------------------------------------- */
+
+/*
+ * Base UI renders a fixed-position wrapper around the popup. Radix put the
+ * z-index on the content itself, so the positioner needs it now.
+ */
+.app-select-positioner {
+  z-index: 1300;
+}
+
+/*
+ * The popup follows the trigger width (Radix `position="popper"`) and the
+ * list is the scroll container, like the previous Radix viewport.
+ */
+.app-select-content[data-base-ui-select-content] {
+  width: var(--anchor-width, auto);
+  max-height: none;
+}
+
+.app-select-viewport[data-base-ui-select-list] {
+  max-height: min(280px, var(--available-height, 280px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Base UI marks the open trigger with `data-popup-open` (Radix used `data-state`). */
+.app-select-trigger[data-popup-open] {
+  outline: none;
+  border-color: var(--text-muted);
+  background: var(--bg-input-focus);
+  box-shadow: 0 0 0 2px var(--accent-focus-ring);
+}
+
+.app-select-trigger[data-popup-open] .app-select-chevron {
+  transform: rotate(180deg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%23e0e0e0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* Base UI marks the checked option with `data-selected` (Radix used `data-state="checked"`). */
+.app-select-option[data-selected] {
+  color: var(--text-bright);
+  background: var(--bg-hover-strong);
+}
+
+.app-select-option[data-selected][data-highlighted] {
+  background: var(--accent-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Number field (Base UI)
+ * ------------------------------------------------------------------------- */
+
+/* The stepper buttons are not rendered, so the input fills the whole row. */
+.app-number-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-number-field [data-base-ui-number-field-input] {
+  width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * Switch (Base UI)
+ * ------------------------------------------------------------------------- */
+
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  transition:
+    background-color var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy);
+}
+
+.app-switch[data-checked] {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+
+.app-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-bright);
+  transform: translateY(-50%);
+  transition: transform var(--dur-fast) var(--ease-snappy);
+}
+
+.app-switch[data-checked] .app-switch-thumb {
+  transform: translate(14px, -50%);
+}

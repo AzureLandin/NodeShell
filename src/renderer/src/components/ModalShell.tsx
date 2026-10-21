@@ -1,12 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-
-const CLOSE_FALLBACK_MS = 400
-const CLOSE_FALLBACK_SIMPLE_MS = 180
-
-type Phase = 'preenter' | 'open' | 'closing'
-
-export type ModalMotion = 'default' | 'simple' | 'none'
+import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
+import {
+  DialogBackdrop,
+  DialogPopup,
+  DialogPortal,
+  DialogRoot,
+  DialogViewport,
+  type DialogChangeDetails,
+  type DialogPartState
+} from '../ui/dialog'
 
 const ModalCloseContext = createContext<() => void>(() => {})
 
@@ -14,10 +15,14 @@ export function useModalClose(): () => void {
   return useContext(ModalCloseContext)
 }
 
+export type ModalMotion = 'default' | 'simple' | 'none'
+
 interface ModalShellProps {
   onClose: () => void
   children: React.ReactNode
   dialogClassName?: string
+  /** Extra class for the dimmed overlay (e.g. a higher stacking order). */
+  overlayClassName?: string
   labelledBy?: string
   /** Default true. Set false while a nested form owns Escape, or during busy connect. */
   closeOnEscape?: boolean
@@ -25,142 +30,130 @@ interface ModalShellProps {
   closeOnOverlayClick?: boolean
   /** Modal animation variant: 'default' (scale+fade), 'simple' (fade only), 'none' (instant). */
   motion?: ModalMotion
+  /** Element focused when the modal opens. Defaults to the first focusable child. */
+  initialFocus?: React.RefObject<HTMLElement | null>
 }
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
+/**
+ * Maps the Base UI transition phase onto the legacy visual states that
+ * App.css animates: `is-open` while the dialog is fully open, `is-closing`
+ * while it plays the exit transition and nothing while it enters.
+ */
+function transitionClass(state: DialogPartState): string {
+  if (state.transitionStatus === 'ending') return 'is-closing'
+  if (state.transitionStatus === 'starting') return ''
+  return 'is-open'
+}
+
 export function ModalShell({
   onClose,
   children,
   dialogClassName = '',
+  overlayClassName = '',
   labelledBy,
   closeOnEscape = true,
   closeOnOverlayClick = true,
-  motion = 'default'
+  motion = 'default',
+  initialFocus
 }: ModalShellProps): React.JSX.Element {
-  const isNoneMotion = motion === 'none' || prefersReducedMotion()
-  const [phase, setPhase] = useState<Phase>(() => (isNoneMotion ? 'open' : 'preenter'))
-  const closingRef = useRef(false)
+  // Reduced motion users get the dialog without an enter transition, everyone
+  // else mounts closed and opens on the next layout tick so Base UI runs the
+  // `data-starting-style` phase.
+  const [open, setOpen] = useState(() => prefersReducedMotion())
   const onCloseRef = useRef(onClose)
-  const timeoutRef = useRef<number | null>(null)
   const closeOnEscapeRef = useRef(closeOnEscape)
+  const closeOnOverlayClickRef = useRef(closeOnOverlayClick)
   onCloseRef.current = onClose
   closeOnEscapeRef.current = closeOnEscape
+  closeOnOverlayClickRef.current = closeOnOverlayClick
 
-  useEffect(() => {
-    if (isNoneMotion) {
-      setPhase('open')
-      return
-    }
-    const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setPhase('open'))
-    })
-    return () => cancelAnimationFrame(id)
-  }, [isNoneMotion])
-
-  const finishClose = useCallback(() => {
-    if (!closingRef.current) return
-    closingRef.current = false
-    if (timeoutRef.current != null) {
-      window.clearTimeout(timeoutRef.current)
-      timeoutRef.current = null
-    }
-    onCloseRef.current()
+  useLayoutEffect(() => {
+    setOpen(true)
   }, [])
 
   const requestClose = useCallback(() => {
-    if (closingRef.current) return
-    closingRef.current = true
-    if (isNoneMotion) {
-      onCloseRef.current()
-      closingRef.current = false
-      return
-    }
-    setPhase('closing')
-    const fallback = motion === 'simple' ? CLOSE_FALLBACK_SIMPLE_MS : CLOSE_FALLBACK_MS
-    timeoutRef.current = window.setTimeout(finishClose, fallback)
-  }, [finishClose, isNoneMotion, motion])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && closeOnEscapeRef.current) requestClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [requestClose])
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current)
-    }
+    setOpen(false)
   }, [])
 
-  const onDialogTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>): void => {
-    if (e.target !== e.currentTarget) return
-    if (phase !== 'closing') return
-    if (e.propertyName !== 'opacity') return
-    finishClose()
-  }
+  const handleOpenChange = useCallback((nextOpen: boolean, details: DialogChangeDetails) => {
+    if (nextOpen) {
+      setOpen(true)
+      return
+    }
+    if (details.reason === 'escape-key' && !closeOnEscapeRef.current) {
+      // A nested form owns Escape (SFTP editor, host picker form): keep the
+      // key event alive so the window-level handler still sees it.
+      details.cancel()
+      details.allowPropagation()
+      return
+    }
+    if (details.reason === 'outside-press' && !closeOnOverlayClickRef.current) {
+      details.cancel()
+      return
+    }
+    setOpen(false)
+  }, [])
 
-  const overlayClass = [
-    'modal-overlay',
-    motion === 'default' ? 'modal-overlay--animated' : '',
-    motion === 'simple' ? 'modal-overlay--simple' : '',
-    phase === 'open' ? 'is-open' : '',
-    phase === 'closing' ? 'is-closing' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const handleOpenChangeComplete = useCallback((nextOpen: boolean) => {
+    // The exit transition finished — now hand control back to the owner.
+    if (!nextOpen) onCloseRef.current()
+  }, [])
 
-  const dialogClass = [
-    'modal',
-    motion === 'default' ? 'modal--animated' : '',
-    motion === 'simple' ? 'modal-motion-simple' : '',
-    dialogClassName,
-    phase === 'open' ? 'is-open' : '',
-    phase === 'closing' ? 'is-closing' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const overlayClass = useCallback(
+    (state: DialogPartState) =>
+      [
+        'modal-overlay',
+        overlayClassName,
+        motion === 'default' ? 'modal-overlay--animated' : '',
+        motion === 'simple' ? 'modal-overlay--simple' : '',
+        transitionClass(state)
+      ]
+        .filter(Boolean)
+        .join(' '),
+    [motion, overlayClassName]
+  )
 
-  const overlayPointerDownRef = useRef(false)
+  const dialogClass = useCallback(
+    (state: DialogPartState) =>
+      [
+        'modal',
+        motion === 'default' ? 'modal--animated' : '',
+        motion === 'simple' ? 'modal-motion-simple' : '',
+        dialogClassName,
+        transitionClass(state)
+      ]
+        .filter(Boolean)
+        .join(' '),
+    [dialogClassName, motion]
+  )
 
-  const onOverlayPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
-    // Only count presses that start on the dimmed backdrop, not the dialog.
-    overlayPointerDownRef.current = e.target === e.currentTarget
-  }
-
-  const onOverlayClick = (e: React.MouseEvent<HTMLDivElement>): void => {
-    if (!closeOnOverlayClick) return
-    // Ignore click if the gesture started inside the dialog (e.g. text selection
-    // drag that ends on the backdrop) — that used to close the host picker.
-    if (!overlayPointerDownRef.current) return
-    if (e.target !== e.currentTarget) return
-    requestClose()
-  }
-
-  return createPortal(
+  return (
     <ModalCloseContext.Provider value={requestClose}>
-      <div
-        className={overlayClass}
-        role="presentation"
-        onPointerDown={onOverlayPointerDown}
-        onClick={onOverlayClick}
+      <DialogRoot
+        open={open}
+        onOpenChange={handleOpenChange}
+        onOpenChangeComplete={handleOpenChangeComplete}
+        disablePointerDismissal={!closeOnOverlayClick}
       >
-        <div
-          className={dialogClass}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={labelledBy}
-          onClick={(e) => e.stopPropagation()}
-          onTransitionEnd={onDialogTransitionEnd}
-        >
-          {children}
-        </div>
-      </div>
-    </ModalCloseContext.Provider>,
-    document.body
+        <DialogPortal>
+          <DialogBackdrop className={overlayClass} forceRender>
+            <DialogViewport className="modal-viewport">
+              <DialogPopup
+                className={dialogClass}
+                aria-labelledby={labelledBy}
+                aria-modal="true"
+                initialFocus={initialFocus}
+              >
+                {children}
+              </DialogPopup>
+            </DialogViewport>
+          </DialogBackdrop>
+        </DialogPortal>
+      </DialogRoot>
+    </ModalCloseContext.Provider>
   )
 }
