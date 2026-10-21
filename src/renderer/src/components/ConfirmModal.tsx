@@ -1,5 +1,15 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogRoot,
+  AlertDialogTitle,
+  AlertDialogViewport
+} from '../ui/alert-dialog'
 
 interface ConfirmModalProps {
   title: string
@@ -20,49 +30,72 @@ export function ConfirmModal({
   onCancel
 }: ConfirmModalProps): React.JSX.Element {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(true)
+  const popupRef = useRef<HTMLDivElement | null>(null)
+  const confirmRef = useRef<HTMLButtonElement | null>(null)
   const overlayPointerDownRef = useRef(false)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCancel()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      setOpen(nextOpen)
+      if (!nextOpen) onCancel()
+    },
+    [onCancel]
+  )
+
+  const onBackdropPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Only presses that start on the dimmed backdrop count, not presses that
+    // start inside the dialog and end on the backdrop.
+    overlayPointerDownRef.current = !(popupRef.current?.contains(e.target as Node) ?? false)
+  }, [])
+
+  const onBackdropClick = useCallback(() => {
+    if (!overlayPointerDownRef.current) return
+    overlayPointerDownRef.current = false
+    onCancel()
   }, [onCancel])
 
   return (
-    <div
-      className="modal-overlay confirm-modal-overlay"
-      role="presentation"
-      onPointerDown={(e) => {
-        overlayPointerDownRef.current = e.target === e.currentTarget
-      }}
-      onClick={(e) => {
-        if (!overlayPointerDownRef.current) return
-        if (e.target !== e.currentTarget) return
-        onCancel()
-      }}
-    >
-      <div
-        className="modal confirm-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-modal-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 id="confirm-modal-title" className="modal-title">
-          {title}
-        </h3>
-        <p className="confirm-modal-message">{message}</p>
-        <div className="form-actions">
-          <button type="button" className="btn-secondary" onClick={onCancel}>
-            {cancelLabel ?? t('common.cancel')}
-          </button>
-          <button type="button" className="btn-primary" onClick={onConfirm} autoFocus>
-            {confirmLabel ?? t('common.confirm')}
-          </button>
-        </div>
-      </div>
-    </div>
+    <AlertDialogRoot open={open} onOpenChange={handleOpenChange}>
+      <AlertDialogPortal>
+        <AlertDialogBackdrop
+          className="modal-overlay confirm-modal-overlay"
+          forceRender
+          onPointerDown={onBackdropPointerDown}
+          onClick={onBackdropClick}
+        >
+          <AlertDialogViewport className="modal-viewport">
+            <AlertDialogPopup
+              ref={popupRef}
+              className="modal confirm-modal"
+              aria-labelledby="confirm-modal-title"
+              aria-modal="true"
+              initialFocus={confirmRef}
+            >
+              <AlertDialogTitle id="confirm-modal-title" className="modal-title">
+                {title}
+              </AlertDialogTitle>
+              <AlertDialogDescription className="confirm-modal-message">
+                {message}
+              </AlertDialogDescription>
+              <div className="form-actions">
+                <AlertDialogClose className="btn-secondary">
+                  {cancelLabel ?? t('common.cancel')}
+                </AlertDialogClose>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  ref={confirmRef}
+                  onClick={onConfirm}
+                  autoFocus
+                >
+                  {confirmLabel ?? t('common.confirm')}
+                </button>
+              </div>
+            </AlertDialogPopup>
+          </AlertDialogViewport>
+        </AlertDialogBackdrop>
+      </AlertDialogPortal>
+    </AlertDialogRoot>
   )
 }

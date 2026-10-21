@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ModalShell } from '../../src/renderer/src/components/ModalShell'
+
+function overlayOf(dialog: HTMLElement): HTMLElement {
+  const overlay = dialog.closest('.modal-overlay')
+  if (!(overlay instanceof HTMLElement)) throw new Error('modal overlay not found')
+  return overlay
+}
 
 describe('ModalShell motion isolation', () => {
   it('applies default animated classes when motion is default', () => {
@@ -18,7 +24,7 @@ describe('ModalShell motion isolation', () => {
     expect(dialog).not.toHaveClass('modal-motion-simple')
     expect(dialog).toHaveClass('test-modal')
 
-    const overlay = dialog.parentElement
+    const overlay = overlayOf(dialog)
     expect(overlay).toHaveClass('modal-overlay--animated')
     expect(overlay).not.toHaveClass('modal-overlay--simple')
   })
@@ -36,7 +42,7 @@ describe('ModalShell motion isolation', () => {
     expect(dialog).not.toHaveClass('modal--animated')
     expect(dialog).toHaveClass('settings-modal')
 
-    const overlay = dialog.parentElement
+    const overlay = overlayOf(dialog)
     expect(overlay).toHaveClass('modal-overlay--simple')
     expect(overlay).not.toHaveClass('modal-overlay--animated')
   })
@@ -54,9 +60,24 @@ describe('ModalShell motion isolation', () => {
     expect(dialog).not.toHaveClass('modal-motion-simple')
     expect(dialog).toHaveClass('plain-modal')
 
-    const overlay = dialog.parentElement
+    const overlay = overlayOf(dialog)
     expect(overlay).not.toHaveClass('modal-overlay--animated')
     expect(overlay).not.toHaveClass('modal-overlay--simple')
+  })
+
+  it('marks the sheet as an open modal once mounted', () => {
+    const onClose = vi.fn()
+    render(
+      <ModalShell onClose={onClose} labelledBy="shell-title">
+        <h3 id="shell-title">Shell title</h3>
+      </ModalShell>
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Shell title' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('aria-labelledby', 'shell-title')
+    expect(dialog).toHaveClass('is-open')
+    expect(overlayOf(dialog)).toHaveClass('is-open')
   })
 
   it('closes on Escape key press in simple motion mode', async () => {
@@ -67,8 +88,21 @@ describe('ModalShell motion isolation', () => {
       </ModalShell>
     )
 
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps the modal open on Escape when closeOnEscape is false', async () => {
+    const onClose = vi.fn()
+    render(
+      <ModalShell onClose={onClose} motion="simple" closeOnEscape={false}>
+        <div>Content</div>
+      </ModalShell>
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('closes on overlay backdrop click in simple motion mode', async () => {
@@ -80,12 +114,29 @@ describe('ModalShell motion isolation', () => {
     )
 
     const dialog = screen.getByRole('dialog')
-    const overlay = dialog.parentElement as HTMLElement
+    const overlay = overlayOf(dialog)
 
     // Pointer down and click on overlay
     fireEvent.pointerDown(overlay)
     fireEvent.click(overlay)
-    expect(onClose).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps the modal open on backdrop click when closeOnOverlayClick is false', async () => {
+    const onClose = vi.fn()
+    render(
+      <ModalShell onClose={onClose} motion="simple" closeOnOverlayClick={false}>
+        <div>Content</div>
+      </ModalShell>
+    )
+
+    const dialog = screen.getByRole('dialog')
+    const overlay = overlayOf(dialog)
+
+    fireEvent.pointerDown(overlay)
+    fireEvent.click(overlay)
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('does not close when clicking inside dialog content', async () => {
@@ -100,5 +151,27 @@ describe('ModalShell motion isolation', () => {
     const user = userEvent.setup()
     await user.click(button)
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('moves focus into the dialog and back to the opener on close', async () => {
+    const onClose = vi.fn()
+    const outside = document.createElement('button')
+    outside.textContent = 'Outside'
+    document.body.appendChild(outside)
+    outside.focus()
+
+    render(
+      <ModalShell onClose={onClose} motion="simple">
+        <button type="button">Inside Button</button>
+      </ModalShell>
+    )
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Inside Button' })).toHaveFocus())
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(outside).toHaveFocus())
+
+    outside.remove()
   })
 })

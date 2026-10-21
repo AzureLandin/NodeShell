@@ -210,6 +210,72 @@ describe('SftpTextEditorModal', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
 
+  it('prompts before discarding unsaved changes on Escape', async () => {
+    const fake = installFakeApi()
+    fake.mocks.sftp.readText.mockResolvedValue({
+      path: '/home/user/a.py',
+      content: 'x'
+    })
+    const onClose = vi.fn()
+
+    renderWithI18n(
+      <SftpTextEditorModal
+        sessionId="s1"
+        target={{ name: 'a.py', remotePath: 'a.py' }}
+        onClose={onClose}
+      />
+    )
+
+    const textarea = await screen.findByDisplayValue('x')
+    fireEvent.change(textarea, { target: { value: 'xy' } })
+
+    // The editor owns Escape: the sheet stays open and the confirm prompt shows.
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(
+      await screen.findByText('You have unsaved changes. Close without saving?')
+    ).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('cancels the discard prompt when its backdrop is clicked', async () => {
+    const fake = installFakeApi()
+    fake.mocks.sftp.readText.mockResolvedValue({
+      path: '/home/user/a.py',
+      content: 'x'
+    })
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+
+    renderWithI18n(
+      <SftpTextEditorModal
+        sessionId="s1"
+        target={{ name: 'a.py', remotePath: 'a.py' }}
+        onClose={onClose}
+      />
+    )
+
+    const textarea = await screen.findByDisplayValue('x')
+    fireEvent.change(textarea, { target: { value: 'xy' } })
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(
+      await screen.findByText('You have unsaved changes. Close without saving?')
+    ).toBeInTheDocument()
+
+    const backdrop = document.querySelector('.confirm-modal-overlay') as HTMLElement
+    expect(backdrop).not.toBeNull()
+    fireEvent.pointerDown(backdrop)
+    fireEvent.click(backdrop)
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('You have unsaved changes. Close without saving?')
+      ).not.toBeInTheDocument()
+    )
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('saves with Ctrl/Meta+S', async () => {
     const fake = installFakeApi()
     fake.mocks.sftp.readText.mockResolvedValue({

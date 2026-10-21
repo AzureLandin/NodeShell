@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PermissionAskEvent, PermissionDecision } from '../../../shared/types'
+import { ModalShell } from './ModalShell'
 
 interface PermissionModalProps {
   request: PermissionAskEvent
@@ -32,40 +33,15 @@ export function PermissionModal({
   variant = 'modal'
 }: PermissionModalProps): React.JSX.Element {
   const { t } = useTranslation()
-  const overlayPointerDownRef = useRef(false)
   const inline = variant === 'inline'
-
-  useEffect(() => {
-    if (inline) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onDecide('deny')
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [inline, onDecide])
+  const denyRef = useRef<HTMLButtonElement | null>(null)
 
   const source =
     request.source === 'mcp' ? t('permission.sourceMcp') : t('permission.sourceAgent')
   const btnClass = inline ? 'btn-sm' : undefined
 
-  const dialog = (
-    <div
-      className={inline ? 'agent-permission' : 'modal confirm-modal permission-modal'}
-      role="dialog"
-      aria-modal={inline ? undefined : true}
-      aria-labelledby="permission-modal-title"
-      onClick={inline ? undefined : (e) => e.stopPropagation()}
-      onKeyDown={
-        inline
-          ? (e) => {
-              if (e.key !== 'Escape') return
-              e.preventDefault()
-              e.stopPropagation()
-              onDecide('deny')
-            }
-          : undefined
-      }
-    >
+  const body = (
+    <>
       <h3 id="permission-modal-title" className="modal-title">
         {t('permission.title')}
       </h3>
@@ -86,6 +62,7 @@ export function PermissionModal({
         <button
           type="button"
           className={`btn-secondary${btnClass ? ` ${btnClass}` : ''}`}
+          ref={denyRef}
           autoFocus
           onClick={() => onDecide('deny')}
         >
@@ -106,25 +83,38 @@ export function PermissionModal({
           {t('permission.allow')}
         </button>
       </div>
-    </div>
+    </>
   )
 
-  if (inline) return dialog
+  if (inline) {
+    return (
+      <div
+        className="agent-permission"
+        role="dialog"
+        aria-modal={undefined}
+        aria-labelledby="permission-modal-title"
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return
+          e.preventDefault()
+          e.stopPropagation()
+          onDecide('deny')
+        }}
+      >
+        {body}
+      </div>
+    )
+  }
 
   return (
-    <div
-      className="modal-overlay permission-modal-overlay"
-      role="presentation"
-      onPointerDown={(e) => {
-        overlayPointerDownRef.current = e.target === e.currentTarget
-      }}
-      onClick={(e) => {
-        if (!overlayPointerDownRef.current) return
-        if (e.target !== e.currentTarget) return
-        onDecide('deny')
-      }}
+    <ModalShell
+      onClose={() => onDecide('deny')}
+      dialogClassName="confirm-modal permission-modal"
+      overlayClassName="permission-modal-overlay"
+      labelledBy="permission-modal-title"
+      motion="none"
+      initialFocus={denyRef}
     >
-      {dialog}
-    </div>
+      {body}
+    </ModalShell>
   )
 }
