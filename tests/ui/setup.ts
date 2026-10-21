@@ -29,8 +29,8 @@ if (typeof window !== 'undefined') {
     dispatchEvent: () => false
   })) as typeof window.matchMedia
 
-  // @radix-ui/react-select (via @floating-ui) observes the viewport for
-  // scroll-buffer logic.
+  // @base-ui/react (via @floating-ui) observes the viewport for scroll-buffer
+  // logic.
   class ResizeObserverStub {
     observe = (): void => {}
     unobserve = (): void => {}
@@ -41,7 +41,7 @@ if (typeof window !== 'undefined') {
   // Radix scrolls the focused option into view; jsdom does not implement it.
   if (typeof Element !== 'undefined') {
     Element.prototype.scrollIntoView = () => undefined
-    // @radix-ui/react-select calls these on pointerdown targets.
+    // Base UI select/menu primitives call these on pointerdown targets.
     Element.prototype.hasPointerCapture = () => false
     Element.prototype.setPointerCapture = () => undefined
     Element.prototype.releasePointerCapture = () => undefined

@@ -3981,8 +3981,7 @@ button.agent-head-more:hover:not(:disabled) {
     transform var(--dur-fast) var(--ease-snappy);
 }
 
-.app-select-trigger > span,
-.app-select-trigger [data-radix-select-value] {
+.app-select-trigger > span {
   color: inherit;
 }
 
@@ -3991,7 +3990,6 @@ button.agent-head-more:hover:not(:disabled) {
   background: var(--bg-input-focus);
 }
 
-.app-select-trigger[data-state='open'],
 .app-select-trigger:focus {
   outline: none;
   border-color: var(--text-muted);
@@ -4022,11 +4020,6 @@ button.agent-head-more:hover:not(:disabled) {
   color: transparent;
 }
 
-.app-select-trigger[data-state='open'] .app-select-chevron {
-  transform: rotate(180deg);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%23e0e0e0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-}
-
 .app-select-content {
   z-index: 1300;
   overflow: hidden;
@@ -4034,8 +4027,6 @@ button.agent-head-more:hover:not(:disabled) {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-modal);
-  width: var(--radix-select-trigger-width);
-  max-height: min(280px, var(--radix-select-content-available-height));
 }
 
 .app-select-viewport {
@@ -4082,15 +4073,6 @@ button.agent-head-more:hover:not(:disabled) {
 .app-select-option[data-highlighted] {
   background: var(--bg-elevated);
   color: var(--text-bright);
-}
-
-.app-select-option[data-state='checked'] {
-  color: var(--text-bright);
-  background: var(--bg-hover-strong);
-}
-
-.app-select-option[data-state='checked'][data-highlighted] {
-  background: var(--accent-primary);
 }
 
 .app-select-option[data-disabled] {
