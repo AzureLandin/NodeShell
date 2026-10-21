@@ -246,9 +246,13 @@ describe('TransferCenter UI component', () => {
 
     const region = await screen.findByRole('region', { name: /Transfers/i })
     expect(region).toBeInTheDocument()
-    // Verify portal renders directly under document.body
-    expect(region.parentElement).toBe(document.body)
-    expect(region.style.position).toBe('fixed')
+    // Verify the panel is portaled to the document body and that Base UI
+    // positions the wrapper element around it.
+    expect(document.body.contains(region)).toBe(true)
+    expect(region.closest('.transfer-center-anchor')).toBeNull()
+    const positioner = region.parentElement as HTMLElement
+    expect(positioner).not.toBeNull()
+    expect(positioner.style.position).toBe('fixed')
     expect(screen.getByText('archive.tar.gz')).toBeInTheDocument()
     expect(screen.getByText('Production Server')).toBeInTheDocument()
     expect(screen.getByText('Transferring')).toBeInTheDocument()
@@ -275,8 +279,8 @@ describe('TransferCenter UI component', () => {
     await user.click(toggleBtn)
     expect(await screen.findByRole('region', { name: /Transfers/i })).toBeInTheDocument()
 
-    // Click outside area
-    fireEvent.mouseDown(screen.getByTestId('outside-area'))
+    // Click outside area (Base UI dismisses on the outside press)
+    await user.click(screen.getByTestId('outside-area'))
     expect(screen.queryByRole('region', { name: /Transfers/i })).not.toBeInTheDocument()
   })
 

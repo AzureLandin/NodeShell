@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ContextMenuSurface } from '../ui/context-menu'
+import { MenuItem, MenuSeparator } from '../ui/menu'
 
 export interface TerminalContextMenuProps {
   x: number
@@ -11,9 +13,13 @@ export interface TerminalContextMenuProps {
   onClose: () => void
 }
 
-const MENU_WIDTH = 160
-const MENU_HEIGHT = 96
-
+/**
+ * Right-click menu of the terminal.
+ *
+ * The menu is mounted only while it is open; Base UI owns the positioning at
+ * the pointer, the roving focus, the Escape/outside-press dismissal and the
+ * close-on-select behaviour.
+ */
 export function TerminalContextMenu({
   x,
   y,
@@ -24,51 +30,37 @@ export function TerminalContextMenu({
   onClose
 }: TerminalContextMenuProps): ReactNode {
   const { t } = useTranslation()
-  const left = Math.min(x, Math.max(0, window.innerWidth - MENU_WIDTH))
-  const top = Math.min(y, Math.max(0, window.innerHeight - MENU_HEIGHT))
+  const [open, setOpen] = useState(true)
+
+  const handleOpenChange = useCallback(
+    (next: boolean): void => {
+      setOpen(next)
+      if (!next) {
+        onClose()
+      }
+    },
+    [onClose]
+  )
+
   return (
-    <div
-      role="menu"
+    <ContextMenuSurface
+      x={x}
+      y={y}
+      open={open}
+      onOpenChange={handleOpenChange}
       className="terminal-context-menu"
-      style={{ left, top }}
-      onContextMenu={(e) => e.preventDefault()}
-      data-testid="terminal-context-menu"
+      testId="terminal-context-menu"
     >
-      <button
-        type="button"
-        role="menuitem"
-        className="terminal-context-menu-item"
-        disabled={!canCopy}
-        onClick={() => {
-          onCopy()
-          onClose()
-        }}
-      >
+      <MenuItem className="terminal-context-menu-item" disabled={!canCopy} onClick={onCopy}>
         {t('terminal.copy')}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="terminal-context-menu-item"
-        onClick={() => {
-          onPaste()
-          onClose()
-        }}
-      >
+      </MenuItem>
+      <MenuItem className="terminal-context-menu-item" onClick={onPaste}>
         {t('terminal.paste')}
-      </button>
-      <div role="separator" className="terminal-context-menu-separator" />
-      <button
-        type="button"
-        role="menuitem"
-        className="terminal-context-menu-item"
-        onClick={() => {
-          onClear()
-          onClose()
-        }}
-      >
+      </MenuItem>
+      <MenuSeparator className="terminal-context-menu-separator" />
+      <MenuItem className="terminal-context-menu-item" onClick={onClear}>
         {t('terminal.clearScreen')}
-      </button>
-    </div>
+      </MenuItem>
+    </ContextMenuSurface>
   )
 }
