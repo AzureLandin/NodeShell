@@ -52,6 +52,16 @@ type AppSettings struct {
 	// picker's starting selection for a new SSH tab.
 	AgentDefaultProviderID string `json:"agentDefaultProviderId"`
 	AgentDefaultModel      string `json:"agentDefaultModel"`
+	// AgentContextWindow is the estimated context budget (tokens) the agent
+	// runtime keeps for one conversation. 0 means "unlimited": the legacy
+	// behaviour where the provider's own model limit decides.
+	AgentContextWindow int `json:"agentContextWindow"`
+	// AgentThinkingStrength is the reasoning effort requested from the
+	// provider: auto (default), low, medium or high.
+	AgentThinkingStrength string `json:"agentThinkingStrength"`
+	// AgentContextCompression is off (default) or auto: whether the runtime
+	// may compact its own history when the context budget runs out.
+	AgentContextCompression string `json:"agentContextCompression"`
 	// AgentProvidersPresent is true when agentProviders was in the file
 	// (including an empty array). False means a pre-multi-provider file or a
 	// missing file; Get then synthesises a legacy provider from the old
@@ -79,6 +89,12 @@ var Defaults = AppSettings{
 	AgentModel:            "gpt-4o-mini",
 	PermissionPolicy:      "ask",
 	McpPermissionMode:     string(permission.MCPModeExternal),
+	// Agent runtime defaults are conservative: no context budget of our own
+	// (0 = the provider's model limit applies), no forced reasoning effort
+	// and no automatic history compaction.
+	AgentContextWindow:      0,
+	AgentThinkingStrength:   AgentThinkingAuto,
+	AgentContextCompression: AgentCompressionOff,
 }
 
 // Bounds from settings-store.ts.
@@ -104,25 +120,45 @@ const (
 	LegacyProviderID = "legacy"
 	// LegacyProviderName is the display name of that synthesised provider.
 	LegacyProviderName = "Default"
+	// AgentContextWindowMin and AgentContextWindowMax bound the agent
+	// context budget in tokens. 0 is a valid value on its own and means
+	// "unlimited" (the provider's model limit applies).
+	AgentContextWindowMin = 4096
+	AgentContextWindowMax = 1048576
+	// AgentThinkingAuto lets the provider choose the reasoning effort.
+	AgentThinkingAuto = "auto"
+	// AgentThinkingLow and AgentThinkingMedium are explicit reasoning
+	// effort levels; AgentThinkingHigh requests the most thorough one.
+	AgentThinkingLow    = "low"
+	AgentThinkingMedium = "medium"
+	AgentThinkingHigh   = "high"
+	// AgentCompressionOff disables automatic context compaction.
+	AgentCompressionOff = "off"
+	// AgentCompressionAuto lets the runtime compact its own history when
+	// the context budget runs out.
+	AgentCompressionAuto = "auto"
 )
 
 // Patch mirrors the Partial<AppSettings> passed to settings.set; nil fields
 // are left unchanged. Numeric fields are floats so fractional input is
 // rounded exactly like the TS normalize functions.
 type Patch struct {
-	Language               *string          `json:"language"`
-	TerminalFontFamily     *string          `json:"terminalFontFamily"`
-	TerminalFontSize       *float64         `json:"terminalFontSize"`
-	McpIdleTimeoutMinutes  *float64         `json:"mcpIdleTimeoutMinutes"`
-	McpMaxSessions         *float64         `json:"mcpMaxSessions"`
-	ThemePreference        *string          `json:"themePreference"`
-	AgentBaseURL           *string          `json:"agentBaseUrl"`
-	AgentModel             *string          `json:"agentModel"`
-	AgentProviders         *[]AgentProvider `json:"agentProviders"`
-	AgentDefaultProviderID *string          `json:"agentDefaultProviderId"`
-	AgentDefaultModel      *string          `json:"agentDefaultModel"`
-	PermissionPolicy       *string          `json:"permissionPolicy"`
-	McpPermissionMode      *string          `json:"mcpPermissionMode"`
+	Language                *string          `json:"language"`
+	TerminalFontFamily      *string          `json:"terminalFontFamily"`
+	TerminalFontSize        *float64         `json:"terminalFontSize"`
+	McpIdleTimeoutMinutes   *float64         `json:"mcpIdleTimeoutMinutes"`
+	McpMaxSessions          *float64         `json:"mcpMaxSessions"`
+	ThemePreference         *string          `json:"themePreference"`
+	AgentBaseURL            *string          `json:"agentBaseUrl"`
+	AgentModel              *string          `json:"agentModel"`
+	AgentProviders          *[]AgentProvider `json:"agentProviders"`
+	AgentDefaultProviderID  *string          `json:"agentDefaultProviderId"`
+	AgentDefaultModel       *string          `json:"agentDefaultModel"`
+	AgentContextWindow      *float64         `json:"agentContextWindow"`
+	AgentThinkingStrength   *string          `json:"agentThinkingStrength"`
+	AgentContextCompression *string          `json:"agentContextCompression"`
+	PermissionPolicy        *string          `json:"permissionPolicy"`
+	McpPermissionMode       *string          `json:"mcpPermissionMode"`
 }
 
 // Error carries the stable config error code the frontend maps onto
@@ -141,19 +177,22 @@ func (e *Error) ErrorCode() string { return e.Code }
 // that would fail strict decoding (e.g. wrong-typed or non-numeric) still
 // reach the Number()/typeof-style coercion the TS normalize* functions apply.
 type fileSettings struct {
-	Language               json.RawMessage `json:"language"`
-	TerminalFontFamily     json.RawMessage `json:"terminalFontFamily"`
-	TerminalFontSize       json.RawMessage `json:"terminalFontSize"`
-	McpIdleTimeoutMinutes  json.RawMessage `json:"mcpIdleTimeoutMinutes"`
-	McpMaxSessions         json.RawMessage `json:"mcpMaxSessions"`
-	ThemePreference        json.RawMessage `json:"themePreference"`
-	AgentBaseURL           json.RawMessage `json:"agentBaseUrl"`
-	AgentModel             json.RawMessage `json:"agentModel"`
-	AgentProviders         json.RawMessage `json:"agentProviders"`
-	AgentDefaultProviderID json.RawMessage `json:"agentDefaultProviderId"`
-	AgentDefaultModel      json.RawMessage `json:"agentDefaultModel"`
-	PermissionPolicy       json.RawMessage `json:"permissionPolicy"`
-	McpPermissionMode      json.RawMessage `json:"mcpPermissionMode"`
+	Language                json.RawMessage `json:"language"`
+	TerminalFontFamily      json.RawMessage `json:"terminalFontFamily"`
+	TerminalFontSize        json.RawMessage `json:"terminalFontSize"`
+	McpIdleTimeoutMinutes   json.RawMessage `json:"mcpIdleTimeoutMinutes"`
+	McpMaxSessions          json.RawMessage `json:"mcpMaxSessions"`
+	ThemePreference         json.RawMessage `json:"themePreference"`
+	AgentBaseURL            json.RawMessage `json:"agentBaseUrl"`
+	AgentModel              json.RawMessage `json:"agentModel"`
+	AgentProviders          json.RawMessage `json:"agentProviders"`
+	AgentDefaultProviderID  json.RawMessage `json:"agentDefaultProviderId"`
+	AgentDefaultModel       json.RawMessage `json:"agentDefaultModel"`
+	AgentContextWindow      json.RawMessage `json:"agentContextWindow"`
+	AgentThinkingStrength   json.RawMessage `json:"agentThinkingStrength"`
+	AgentContextCompression json.RawMessage `json:"agentContextCompression"`
+	PermissionPolicy        json.RawMessage `json:"permissionPolicy"`
+	McpPermissionMode       json.RawMessage `json:"mcpPermissionMode"`
 	// rawWasObject is true when the file parsed as a JSON object. An array
 	// top-level yields defaults and must not synthesise a legacy provider.
 	rawWasObject bool
@@ -214,6 +253,9 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 	mcpPermMode := current.McpPermissionMode
 	providers := current.AgentProviders
 	defaultID, defaultModel := current.AgentDefaultProviderID, current.AgentDefaultModel
+	contextWindow := float64(current.AgentContextWindow)
+	thinkingStrength := current.AgentThinkingStrength
+	compression := current.AgentContextCompression
 	if patch.Language != nil {
 		lang = *patch.Language
 	}
@@ -247,6 +289,15 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 	if patch.AgentDefaultModel != nil {
 		defaultModel = *patch.AgentDefaultModel
 	}
+	if patch.AgentContextWindow != nil {
+		contextWindow = *patch.AgentContextWindow
+	}
+	if patch.AgentThinkingStrength != nil {
+		thinkingStrength = *patch.AgentThinkingStrength
+	}
+	if patch.AgentContextCompression != nil {
+		compression = *patch.AgentContextCompression
+	}
 	if patch.PermissionPolicy != nil {
 		permPolicy = *patch.PermissionPolicy
 	}
@@ -255,20 +306,23 @@ func (s *Store) Set(patch Patch) (AppSettings, error) {
 	}
 	defaultID, defaultModel = normalizeAgentDefault(defaultID, defaultModel, providers)
 	next := AppSettings{
-		Language:               normalizeLanguage(lang),
-		TerminalFontFamily:     normalizeTerminalFontFamily(fam),
-		TerminalFontSize:       normalizeTerminalFontSize(size),
-		McpIdleTimeoutMinutes:  normalizeMcpIdleTimeoutMinutes(idle),
-		McpMaxSessions:         normalizeMcpMaxSessions(max),
-		ThemePreference:        normalizeThemePreference(theme),
-		AgentBaseURL:           normalizeAgentBaseURL(agentURL),
-		AgentModel:             normalizeAgentModel(agentModel),
-		AgentProviders:         providers,
-		AgentDefaultProviderID: defaultID,
-		AgentDefaultModel:      defaultModel,
-		AgentProvidersPresent:  true,
-		PermissionPolicy:       normalizePermissionPolicy(permPolicy),
-		McpPermissionMode:      normalizeMcpPermissionMode(mcpPermMode),
+		Language:                normalizeLanguage(lang),
+		TerminalFontFamily:      normalizeTerminalFontFamily(fam),
+		TerminalFontSize:        normalizeTerminalFontSize(size),
+		McpIdleTimeoutMinutes:   normalizeMcpIdleTimeoutMinutes(idle),
+		McpMaxSessions:          normalizeMcpMaxSessions(max),
+		ThemePreference:         normalizeThemePreference(theme),
+		AgentBaseURL:            normalizeAgentBaseURL(agentURL),
+		AgentModel:              normalizeAgentModel(agentModel),
+		AgentProviders:          providers,
+		AgentDefaultProviderID:  defaultID,
+		AgentDefaultModel:       defaultModel,
+		AgentProvidersPresent:   true,
+		AgentContextWindow:      normalizeAgentContextWindow(contextWindow),
+		AgentThinkingStrength:   normalizeAgentThinkingStrength(thinkingStrength),
+		AgentContextCompression: normalizeAgentContextCompression(compression),
+		PermissionPolicy:        normalizePermissionPolicy(permPolicy),
+		McpPermissionMode:       normalizeMcpPermissionMode(mcpPermMode),
 	}
 	if next.AgentProviders == nil {
 		next.AgentProviders = []AgentProvider{}
@@ -576,6 +630,45 @@ func normalizePermissionPolicy(value string) string {
 	}
 }
 
+// normalizeAgentContextWindow keeps 0 (unlimited / legacy behaviour) and
+// otherwise clamps the estimated token budget into
+// [AgentContextWindowMin, AgentContextWindowMax]. A value that is not a
+// number at all falls back to the default instead of clamping, matching how
+// the other numeric settings behave.
+func normalizeAgentContextWindow(value float64) int {
+	if !finite(value) {
+		return Defaults.AgentContextWindow
+	}
+	rounded := math.Round(value)
+	if rounded == 0 {
+		return 0
+	}
+	return clampRound(AgentContextWindowMin, AgentContextWindowMax, rounded)
+}
+
+// normalizeAgentThinkingStrength keeps only auto/low/medium/high; anything
+// else falls back to auto so an unknown value never pins the runtime to a
+// reasoning effort the provider does not know.
+func normalizeAgentThinkingStrength(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AgentThinkingLow, AgentThinkingMedium, AgentThinkingHigh, AgentThinkingAuto:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return Defaults.AgentThinkingStrength
+	}
+}
+
+// normalizeAgentContextCompression keeps only off/auto; anything else falls
+// back to off so history is never compacted behind the user's back.
+func normalizeAgentContextCompression(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AgentCompressionAuto:
+		return AgentCompressionAuto
+	default:
+		return Defaults.AgentContextCompression
+	}
+}
+
 // coerceString resolves a string field the way the TS normalize* functions
 // do: a JSON string wins; a missing field, null, number or boolean is not a
 // string, and each normalizer maps it to its default.
@@ -710,20 +803,23 @@ func normalizeSettings(raw fileSettings) AppSettings {
 		providers,
 	)
 	return AppSettings{
-		Language:               normalizeLanguage(coerceString(raw.Language)),
-		TerminalFontFamily:     normalizeTerminalFontFamily(coerceString(raw.TerminalFontFamily)),
-		TerminalFontSize:       normalizeTerminalFontSize(coerceNumber(raw.TerminalFontSize)),
-		McpIdleTimeoutMinutes:  normalizeMcpIdleTimeoutMinutes(coerceNumber(raw.McpIdleTimeoutMinutes)),
-		McpMaxSessions:         normalizeMcpMaxSessions(coerceNumber(raw.McpMaxSessions)),
-		ThemePreference:        normalizeThemePreference(coerceString(raw.ThemePreference)),
-		AgentBaseURL:           url,
-		AgentModel:             model,
-		AgentProviders:         providers,
-		AgentDefaultProviderID: defaultID,
-		AgentDefaultModel:      defaultModel,
-		AgentProvidersPresent:  present,
-		PermissionPolicy:       normalizePermissionPolicy(coerceString(raw.PermissionPolicy)),
-		McpPermissionMode:      normalizeMcpPermissionMode(coerceString(raw.McpPermissionMode)),
+		Language:                normalizeLanguage(coerceString(raw.Language)),
+		TerminalFontFamily:      normalizeTerminalFontFamily(coerceString(raw.TerminalFontFamily)),
+		TerminalFontSize:        normalizeTerminalFontSize(coerceNumber(raw.TerminalFontSize)),
+		McpIdleTimeoutMinutes:   normalizeMcpIdleTimeoutMinutes(coerceNumber(raw.McpIdleTimeoutMinutes)),
+		McpMaxSessions:          normalizeMcpMaxSessions(coerceNumber(raw.McpMaxSessions)),
+		ThemePreference:         normalizeThemePreference(coerceString(raw.ThemePreference)),
+		AgentBaseURL:            url,
+		AgentModel:              model,
+		AgentProviders:          providers,
+		AgentDefaultProviderID:  defaultID,
+		AgentDefaultModel:       defaultModel,
+		AgentProvidersPresent:   present,
+		AgentContextWindow:      normalizeAgentContextWindow(coerceNumber(raw.AgentContextWindow)),
+		AgentThinkingStrength:   normalizeAgentThinkingStrength(coerceString(raw.AgentThinkingStrength)),
+		AgentContextCompression: normalizeAgentContextCompression(coerceString(raw.AgentContextCompression)),
+		PermissionPolicy:        normalizePermissionPolicy(coerceString(raw.PermissionPolicy)),
+		McpPermissionMode:       normalizeMcpPermissionMode(coerceString(raw.McpPermissionMode)),
 	}
 }
 

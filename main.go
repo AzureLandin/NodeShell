@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 
+	"nodeshell/internal/app"
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/mcpcli"
 )
@@ -79,7 +80,7 @@ func runGUI() int {
 	// stdin/stdout. Detach that console for the GUI entry so a terminal does
 	// not flash when the user launches the desktop app.
 	detachConsole()
-	app := NewApp()
+	application := app.NewApp()
 	err := wails.Run(&options.App{
 		Title:     "NodeShell",
 		Width:     fallbackWindowWidth,
@@ -105,18 +106,18 @@ func runGUI() int {
 			DisableWebViewDrop: false,
 		},
 		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
+			app.Start(application, ctx)
 			applyInitialWindowSize(ctx)
 		},
 		// Dispose all SSH sessions and in-flight connects before the WebView
 		// tears down, so no goroutine outlives the runtime context.
-		OnShutdown: app.shutdown,
+		OnShutdown: func(ctx context.Context) { app.Stop(application, ctx) },
 		// Encode domain error codes as NODESHELL_ERR:<CODE>:<message> so the
 		// frontend parser (src/shared/ipc-error.ts) recovers the code; the
 		// default formatter would strip it down to the message only.
 		ErrorFormatter: apperror.Format,
 		Bind: []interface{}{
-			app,
+			application,
 		},
 	})
 	if err != nil {

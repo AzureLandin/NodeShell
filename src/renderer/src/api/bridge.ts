@@ -2,12 +2,12 @@
  * ApiBridge abstracts the Wails runtime surface the adapter talks to.
  *
  * Wails injects two objects into the WebView window:
- *  - `window.go.main.App`: the generated Go binding methods (one property per
+ *  - `window.go.app.App`: the generated Go binding methods (one property per
  *    exported App method), and
  *  - `window.runtime`: runtime helpers such as EventsOn/EventsOff.
  *
- * The generated `wailsjs/go/main/App.js` files are themselves just thin
- * re-exports of `window.go.main.App`, so the bridge calls that runtime object
+ * The generated `go/app/App.js` bindings are themselves just thin
+ * re-exports of `window.go.app.App`, so the bridge calls that runtime object
  * directly. This keeps the adapter free of hand-maintained copies of the
  * generated binding interface (the artifacts are produced by `wails dev` /
  * `wails build`). When the generated bindings are absent (unit tests, plain
@@ -56,11 +56,11 @@ interface WailsRuntime {
 }
 
 function wailsWindow(): {
-  go?: { main?: { App?: GoApp } }
+  go?: { app?: { App?: GoApp } }
   runtime?: WailsRuntime
 } {
   if (typeof window === 'undefined') return {}
-  return window as { go?: { main?: { App?: GoApp } }; runtime?: WailsRuntime }
+  return window as { go?: { app?: { App?: GoApp } }; runtime?: WailsRuntime }
 }
 
 /**
@@ -70,7 +70,7 @@ function wailsWindow(): {
  */
 export class WailsBridge implements ApiBridge {
   async call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
-    const app = wailsWindow().go?.main?.App
+    const app = wailsWindow().go?.app?.App
     const fn = app?.[method]
     if (typeof fn !== 'function') {
       throw notImplementedError(method)

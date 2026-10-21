@@ -73,7 +73,7 @@ func shutdownMCP(rt *Runtime, m ManagerShutdown) {
 	rt.DisposeAll()
 }
 
-// OS seams for RunMCP (test injection), mirroring the app.go seam pattern so
+// OS seams for RunMCP (test injection), mirroring the internal/app seam pattern so
 // the production entry is testable without touching the real user profile.
 var (
 	resolveDataDir    = configdir.DataDir
