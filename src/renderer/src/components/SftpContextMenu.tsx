@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ContextMenuSurface } from '../ui/context-menu'
+import { MenuItem, MenuSeparator } from '../ui/menu'
 
 export interface SftpContextMenuProps {
   x: number
@@ -14,16 +15,13 @@ export interface SftpContextMenuProps {
   onClose: () => void
 }
 
-const MENU_WIDTH = 160
-const ITEM_HEIGHT = 28
-const SEPARATOR_HEIGHT = 9
-const MENU_PAD = 8
-
-function menuHeight(canEdit: boolean, canDownload: boolean): number {
-  const items = (canEdit ? 1 : 0) + (canDownload ? 1 : 0) + 2
-  return MENU_PAD + items * ITEM_HEIGHT + SEPARATOR_HEIGHT
-}
-
+/**
+ * Right-click menu of a file row.
+ *
+ * The menu is mounted only while it is open; Base UI owns the positioning at
+ * the pointer, the roving focus, the Escape/outside-press dismissal and the
+ * close-on-select behaviour.
+ */
 export function SftpContextMenu({
   x,
   y,
@@ -36,61 +34,44 @@ export function SftpContextMenu({
   onClose
 }: SftpContextMenuProps): ReactNode {
   const { t } = useTranslation()
-  const height = menuHeight(canEdit, canDownload)
-  const left = Math.min(x, Math.max(0, window.innerWidth - MENU_WIDTH))
-  const top = Math.min(y, Math.max(0, window.innerHeight - height))
+  const [open, setOpen] = useState(true)
 
-  const run = (action: () => void): void => {
-    onClose()
-    action()
-  }
+  const handleOpenChange = useCallback(
+    (next: boolean): void => {
+      setOpen(next)
+      if (!next) {
+        onClose()
+      }
+    },
+    [onClose]
+  )
 
-  return createPortal(
-    <div
-      role="menu"
+  return (
+    <ContextMenuSurface
+      x={x}
+      y={y}
+      open={open}
+      onOpenChange={handleOpenChange}
       className="sftp-context-menu"
-      style={{ left, top }}
-      onContextMenu={(e) => e.preventDefault()}
-      data-testid="sftp-context-menu"
+      testId="sftp-context-menu"
     >
       {canEdit ? (
-        <button
-          type="button"
-          role="menuitem"
-          className="sftp-context-menu-item"
-          onClick={() => run(onEdit)}
-        >
+        <MenuItem className="sftp-context-menu-item" onClick={onEdit}>
           {t('sftp.edit')}
-        </button>
+        </MenuItem>
       ) : null}
       {canDownload ? (
-        <button
-          type="button"
-          role="menuitem"
-          className="sftp-context-menu-item"
-          onClick={() => run(onDownload)}
-        >
+        <MenuItem className="sftp-context-menu-item" onClick={onDownload}>
           {t('sftp.download')}
-        </button>
+        </MenuItem>
       ) : null}
-      <button
-        type="button"
-        role="menuitem"
-        className="sftp-context-menu-item"
-        onClick={() => run(onRename)}
-      >
+      <MenuItem className="sftp-context-menu-item" onClick={onRename}>
         {t('sftp.rename')}
-      </button>
-      <div role="separator" className="sftp-context-menu-separator" />
-      <button
-        type="button"
-        role="menuitem"
-        className="sftp-context-menu-item is-danger"
-        onClick={() => run(onDelete)}
-      >
+      </MenuItem>
+      <MenuSeparator className="sftp-context-menu-separator" />
+      <MenuItem className="sftp-context-menu-item is-danger" onClick={onDelete}>
         {t('sftp.delete')}
-      </button>
-    </div>,
-    document.body
+      </MenuItem>
+    </ContextMenuSurface>
   )
 }

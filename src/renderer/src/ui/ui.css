@@ -1,0 +1,119 @@
+/*
+ * Scoped overrides for the Base UI surfaces wrapped in `src/renderer/src/ui`.
+ *
+ * The visual design still comes from `App.css`: the wrappers keep the original
+ * class names so the existing rules keep applying. The rules below only
+ * re-point the handful of properties Base UI has to own:
+ *
+ *  - the element Base UI positions (the wrapper) instead of the surface itself,
+ *  - the toast viewport, which now owns the position of the stack,
+ *  - the disabled and highlighted states of menu items, which Base UI marks
+ *    with `aria-disabled` / `data-highlighted` instead of the native
+ *    `disabled` attribute and the `:hover` pseudo class.
+ *
+ * No animation library is involved: only `transform`/`opacity` style hooks
+ * would be used, and none are needed today.
+ */
+
+/* --------------------------------------------------------------------------
+ * Context menu
+ * ----------------------------------------------------------------------- */
+
+[data-bui-context-menu-positioner] {
+  z-index: 1000;
+}
+
+/*
+ * `App.css` pins the menu with `position: fixed`. Base UI positions the
+ * wrapper element, so the popup itself becomes a normal box inside it.
+ */
+[data-bui-context-menu-popup] {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: auto;
+}
+
+/*
+ * Keyboard navigation highlights the active item with `data-highlighted`
+ * instead of relying on `:hover`, so mirror the hover rules of `App.css`.
+ */
+[data-bui-context-menu-popup] [data-bui-menu-item][data-highlighted] {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+[data-bui-context-menu-popup] [data-bui-menu-item].is-danger[data-highlighted] {
+  background: var(--status-error);
+  color: var(--text-on-accent);
+}
+
+/*
+ * Base UI keeps disabled menu items focusable and marks them with
+ * `aria-disabled`, so the `:disabled` rules of `App.css` need a mirror.
+ */
+[data-bui-context-menu-popup] [data-bui-menu-item][aria-disabled='true'] {
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+[data-bui-context-menu-popup] [data-bui-menu-item][aria-disabled='true']:hover,
+[data-bui-context-menu-popup] [data-bui-menu-item][aria-disabled='true'][data-highlighted] {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Toast
+ * ----------------------------------------------------------------------- */
+
+/*
+ * `App.css` styles `.toast` as a fixed surface in the bottom right corner.
+ * Base UI splits that in two: the viewport owns the position of the stack and
+ * every toast root owns its own surface.
+ */
+[data-bui-toast-viewport] {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+  pointer-events: none;
+}
+
+[data-bui-toast-viewport] > [data-bui-toast] {
+  pointer-events: auto;
+}
+
+[data-bui-toast] {
+  position: relative;
+  right: auto;
+  bottom: auto;
+}
+
+/* --------------------------------------------------------------------------
+ * Popover
+ * ----------------------------------------------------------------------- */
+
+[data-bui-popover-positioner] {
+  z-index: 10000;
+}
+
+/*
+ * `App.css` pins the transfer panel with `position: fixed`. Base UI positions
+ * the wrapper element, so the panel itself becomes a normal box inside it.
+ */
+[data-bui-popover-popup] {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: auto;
+}
