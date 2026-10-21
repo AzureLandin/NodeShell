@@ -38,6 +38,22 @@ export interface AppSettings {
   /** Model id the sidebar agent requests (legacy single-endpoint field). */
   agentModel?: string
   /**
+   * Estimated context budget (tokens) the agent runtime keeps for one
+   * conversation. `0` means unlimited: the provider's own model limit
+   * decides (the legacy behaviour).
+   */
+  agentContextWindow?: number
+  /**
+   * Reasoning effort requested from the provider. `auto` (default) lets the
+   * provider decide.
+   */
+  agentThinkingStrength?: AgentThinkingStrength
+  /**
+   * Whether the agent runtime may compact its own history when the context
+   * budget runs out. `off` (default) never compacts.
+   */
+  agentContextCompression?: AgentContextCompression
+  /**
    * How sensitive GUI sidebar-agent tools (commands, writes, uploads,
    * downloads) are authorised. Default `ask`. Does not control `--mcp`.
    */
@@ -45,6 +61,12 @@ export interface AppSettings {
 }
 
 export type McpPermissionMode = 'external' | 'local'
+
+/** Reasoning effort requested from the provider. */
+export type AgentThinkingStrength = 'auto' | 'low' | 'medium' | 'high'
+
+/** Whether the agent runtime may compact its own history. */
+export type AgentContextCompression = 'off' | 'auto'
 
 export interface AgentProvider {
   id: string
