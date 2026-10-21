@@ -1524,7 +1524,7 @@ func (a *App) DialogOpenPrivateKeyFile() (string, error) {
 // wails.json info.productVersion and package.json version (enforced by
 // TestAppVersionMatchesManifests); a build can override it with
 // -ldflags "-X nodeshell/internal/app.appVersion=...".
-var appVersion = "2.1.0"
+var appVersion = "2.2.0"
 
 // FontsList returns the system font families for the Settings modal. The
 // binding never rejects: a failed enumeration surfaces as an empty list

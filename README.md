@@ -2,7 +2,7 @@
 
 NodeShell 是一款跨平台桌面 SSH 客户端，面向需要同时管理多台远程主机、进行终端操作、SFTP 文件传输和远程运维的开发者与运维人员。
 
-当前版本：**2.1.0**
+当前版本：**2.2.0**
 
 [![CI](https://github.com/AzureLandin/NodeShell/actions/workflows/ci.yml/badge.svg)](https://github.com/AzureLandin/NodeShell/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/AzureLandin/NodeShell?display_name=tag)](https://github.com/AzureLandin/NodeShell/releases/latest)
@@ -79,13 +79,13 @@ NodeShell 是一款跨平台桌面 SSH 客户端，面向需要同时管理多�
 
 请前往 [GitHub Releases](https://github.com/AzureLandin/NodeShell/releases) 下载最新版本。
 
-当前 `v2.1.0` 提供以下主要产物：
+当前 `v2.2.0` 提供以下主要产物：
 
 | 平台 | 架构 | 产物 |
 | --- | --- | --- |
 | Windows | x64 | `nodeshell-amd64-installer.exe` |
-| macOS | ARM64 | `NodeShell-2.1.0-macos-arm64.dmg`、`.zip` |
-| Linux | x64 | `NodeShell-2.1.0-linux-amd64.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` |
+| macOS | ARM64 | `NodeShell-2.2.0-macos-arm64.dmg`、`.zip` |
+| Linux | x64 | `NodeShell-2.2.0-linux-amd64.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` |
 
 > macOS 当前发布产物面向 Apple Silicon（ARM64）。发布产物是否经过平台签名或公证，请以对应 Release 页面为准。
 
@@ -102,26 +102,26 @@ NodeShell 是一款跨平台桌面 SSH 客户端，面向需要同时管理多�
 AppImage：
 
 ```bash
-chmod +x NodeShell-2.1.0-linux-amd64.AppImage
-./NodeShell-2.1.0-linux-amd64.AppImage
+chmod +x NodeShell-2.2.0-linux-amd64.AppImage
+./NodeShell-2.2.0-linux-amd64.AppImage
 ```
 
 Debian/Ubuntu：
 
 ```bash
-sudo apt install ./NodeShell-2.1.0-linux-amd64.deb
+sudo apt install ./NodeShell-2.2.0-linux-amd64.deb
 ```
 
 Fedora/RHEL/openSUSE：
 
 ```bash
-sudo dnf install ./NodeShell-2.1.0-linux-amd64.rpm
+sudo dnf install ./NodeShell-2.2.0-linux-amd64.rpm
 ```
 
 Arch Linux 或兼容发行版：
 
 ```bash
-sudo pacman -U NodeShell-2.1.0-linux-amd64.pkg.tar.zst
+sudo pacman -U NodeShell-2.2.0-linux-amd64.pkg.tar.zst
 ```
 
 ## 快速开始
