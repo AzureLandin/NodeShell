@@ -13,8 +13,6 @@
   --dur-med: 320ms;
   --dur-sidebar: 240ms;
   --dur-sidebar-collapse: 200ms;
-  --glass-blur: 28px;
-  --glass-saturate: 160%;
   --chrome-gap: 8px;
 }
 
@@ -29,7 +27,6 @@
   --bg-hover: #2a2a2a;
   --bg-hover-strong: #3a3a3a;
   --bg-overlay: rgba(0, 0, 0, 0.32);
-  --glass-bg: rgba(28, 28, 30, 0.62);
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --bg-danger: #4a2d2d;
@@ -122,7 +119,6 @@
   --bg-hover: #e9edf3;
   --bg-hover-strong: #dde3eb;
   --bg-overlay: rgba(15, 20, 28, 0.28);
-  --glass-bg: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.55);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --bg-danger: #fef1f1;

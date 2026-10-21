@@ -12,6 +12,13 @@ body,
   overflow: hidden;
 }
 
+/* Root stacking context: keeps portalled overlays (Base UI / Radix popups,
+   modals, menus) layered predictably above the app chrome. Portals render
+   into document.body, so they stay outside this context and above it. */
+#root {
+  isolation: isolate;
+}
+
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
@@ -61,20 +68,15 @@ select {
   font: inherit;
 }
 
+/* Solid surface baseline.
+   Large backdrop blurs were intentionally removed: on WebKitGTK (and other
+   desktop renderers) a blurred backdrop forces an expensive offscreen snapshot
+   on every frame, which dominates paint time for panels, modals and popovers.
+   Surfaces are now opaque, which is both cheaper and easier to reason about. */
 .glass {
-  background: var(--glass-bg);
+  background: var(--bg-panel);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-highlight);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass {
-    background: var(--bg-panel);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
 }
 
 .app {
@@ -137,8 +139,7 @@ button.icon-rail-btn[aria-pressed='true'] {
   transition:
     width var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
     margin-right var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
-    border-color var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
-    box-shadow var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1));
+    border-color var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1));
 }
 
 .sidebar.is-collapsed {
@@ -919,6 +920,9 @@ button.sftp-item-main {
 
 /* Password modal */
 
+/* Overlay is a solid dim layer — no backdrop blur (see the note above
+   `.glass`): blurring the whole viewport is the single most expensive paint
+   operation in the app. */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -927,8 +931,6 @@ button.sftp-item-main {
   align-items: center;
   justify-content: center;
   z-index: 1100;
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .confirm-modal-overlay {
@@ -942,25 +944,19 @@ button.sftp-item-main {
 /* ModalShell staged open/close — legacy overlays keep solid dim above */
 .modal-overlay--animated {
   background: rgba(0, 0, 0, 0);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   transition: background-color var(--dur-med) var(--ease-spring);
 }
 
 .modal-overlay--animated.is-open {
   background: var(--bg-overlay);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .modal-overlay--animated.is-closing {
   background: rgba(0, 0, 0, 0);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 .modal {
-  background: var(--glass-bg);
+  background: var(--bg-elevated);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sheet);
   padding: 20px 22px 18px;
@@ -969,8 +965,6 @@ button.sftp-item-main {
   box-sizing: border-box;
   overflow-x: hidden;
   box-shadow: var(--shadow-modal), var(--glass-highlight);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .modal.password-modal,
@@ -981,22 +975,6 @@ button.sftp-item-main {
 
 .modal.confirm-modal {
   width: min(460px, calc(100vw - 40px));
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .modal,
-  .modal-overlay,
-  .modal-overlay--animated.is-open,
-  .app-select-content {
-    background: var(--bg-panel);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  .modal-overlay,
-  .modal-overlay--animated.is-open {
-    background: var(--bg-overlay);
-  }
 }
 
 .modal.modal--animated {
@@ -2034,8 +2012,7 @@ button.model-id-editor-add-btn:disabled {
   transition:
     width var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
     margin-left var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
-    border-color var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1)),
-    box-shadow var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1));
+    border-color var(--dur-sidebar, 240ms) var(--ease-sidebar, cubic-bezier(0.2, 0.8, 0.2, 1));
 }
 
 .agent-dock.is-collapsed {
@@ -4053,12 +4030,10 @@ button.agent-head-more:hover:not(:disabled) {
 .app-select-content {
   z-index: 1300;
   overflow: hidden;
-  background: var(--glass-bg);
+  background: var(--bg-elevated);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-modal);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   width: var(--radix-select-trigger-width);
   max-height: min(280px, var(--radix-select-content-available-height));
 }
@@ -4410,13 +4385,12 @@ button.session-transfer-toggle.is-active .session-transfer-badge {
   max-height: 480px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-modal, 14px);
   box-shadow: var(--shadow-modal);
   z-index: 10000;
   overflow: hidden;
-  backdrop-filter: blur(20px);
 }
 
 .transfer-center-header {
