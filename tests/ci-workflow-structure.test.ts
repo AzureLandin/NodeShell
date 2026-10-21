@@ -204,6 +204,11 @@ describe('packaging scripts', () => {
     expect(macos).toContain('--options runtime')
   })
 
+  it('package-macos.sh retries a busy hdiutil create and detaches a stale mount', () => {
+    expect(macos).toContain('for attempt in 1 2 3')
+    expect(macos).toContain('hdiutil detach "/Volumes/NodeShell"')
+  })
+
   it('package-linux.sh takes the version as a parameter, not a hardcoded literal', () => {
     expect(linux).toMatch(/version="\$\{5[^}]*\}"/)
     expect(linux).not.toContain('2.0.0')
