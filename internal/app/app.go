@@ -1182,7 +1182,14 @@ func (a *App) agentConfigFor(providerID, model string) (agent.Config, error) {
 	if key == "" {
 		return agent.Config{}, agent.ErrNotConfigured
 	}
-	return agent.Config{BaseURL: p.BaseURL, Model: strings.TrimSpace(model), APIKey: key}, nil
+	return agent.Config{
+		BaseURL:            p.BaseURL,
+		Model:              strings.TrimSpace(model),
+		APIKey:             key,
+		ContextWindow:      current.AgentContextWindow,
+		ThinkingStrength:   current.AgentThinkingStrength,
+		ContextCompression: current.AgentContextCompression,
+	}, nil
 }
 
 func (a *App) agentStatusFrom(current settings.AppSettings) (AgentConfigStatus, error) {

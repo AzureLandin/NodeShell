@@ -53,7 +53,10 @@ func TestGetFromFullFixture(t *testing.T) {
 			BaseURL: "https://api.deepseek.com/v1", Models: []string{"deepseek-chat"},
 		}},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: "deepseek-chat",
-		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
+		AgentContextWindow:      Defaults.AgentContextWindow,
+		AgentThinkingStrength:   Defaults.AgentThinkingStrength,
+		AgentContextCompression: Defaults.AgentContextCompression,
+		PermissionPolicy:        Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -122,7 +125,10 @@ func TestClampsValues(t *testing.T) {
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
 		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
-		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
+		AgentContextWindow:      Defaults.AgentContextWindow,
+		AgentThinkingStrength:   Defaults.AgentThinkingStrength,
+		AgentContextCompression: Defaults.AgentContextCompression,
+		PermissionPolicy:        Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clamp mismatch: got %+v want %+v", got, want)
 	}
@@ -243,7 +249,10 @@ func TestWrongTypedStringFieldsNormalizeLikeTS(t *testing.T) {
 		AgentBaseURL: Defaults.AgentBaseURL, AgentModel: Defaults.AgentModel,
 		AgentProviders:         []AgentProvider{synthesiseLegacyProvider(Defaults.AgentBaseURL, Defaults.AgentModel)},
 		AgentDefaultProviderID: LegacyProviderID, AgentDefaultModel: Defaults.AgentModel,
-		PermissionPolicy: Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
+		AgentContextWindow:      Defaults.AgentContextWindow,
+		AgentThinkingStrength:   Defaults.AgentThinkingStrength,
+		AgentContextCompression: Defaults.AgentContextCompression,
+		PermissionPolicy:        Defaults.PermissionPolicy, McpPermissionMode: Defaults.McpPermissionMode}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v (TS normalize* falls back to defaults)", got, want)
 	}
@@ -541,4 +550,193 @@ func isError(err error, out **Error) bool {
 		*out = e
 	}
 	return ok
+}
+
+// The agent runtime knobs are global and conservative by default: no context
+// budget of our own, no forced reasoning effort and no silent compaction.
+func TestAgentRuntimeDefaults(t *testing.T) {
+	got, err := newStore(t).Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.AgentContextWindow != 0 {
+		t.Fatalf("agentContextWindow = %d, want 0 (unlimited)", got.AgentContextWindow)
+	}
+	if got.AgentThinkingStrength != AgentThinkingAuto {
+		t.Fatalf("agentThinkingStrength = %q, want %q", got.AgentThinkingStrength, AgentThinkingAuto)
+	}
+	if got.AgentContextCompression != AgentCompressionOff {
+		t.Fatalf("agentContextCompression = %q, want %q", got.AgentContextCompression, AgentCompressionOff)
+	}
+	if Defaults.AgentContextWindow != 0 ||
+		Defaults.AgentThinkingStrength != AgentThinkingAuto ||
+		Defaults.AgentContextCompression != AgentCompressionOff {
+		t.Fatalf("Defaults = %+v, want the conservative agent runtime defaults", Defaults)
+	}
+}
+
+// A file written before these fields existed still loads with the defaults.
+func TestLegacyFileGetsAgentRuntimeDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"language": "en"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := New(dir).Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.AgentContextWindow != 0 ||
+		got.AgentThinkingStrength != AgentThinkingAuto ||
+		got.AgentContextCompression != AgentCompressionOff {
+		t.Fatalf("legacy file agent runtime = %+v, want the defaults", got)
+	}
+}
+
+// The context window is 0 (unlimited) or clamped into [4096, 1048576]; a
+// value that is not a number at all falls back to the default.
+func TestAgentContextWindowNormalisation(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"zero means unlimited", `{"agentContextWindow": 0}`, 0},
+		{"inside the range is kept", `{"agentContextWindow": 32768}`, 32768},
+		{"lower bound is kept", `{"agentContextWindow": 4096}`, 4096},
+		{"upper bound is kept", `{"agentContextWindow": 1048576}`, 1048576},
+		{"below the range clamps up", `{"agentContextWindow": 100}`, 4096},
+		{"negative clamps up", `{"agentContextWindow": -1}`, 4096},
+		{"above the range clamps down", `{"agentContextWindow": 99999999}`, 1048576},
+		{"fractional rounds", `{"agentContextWindow": 8192.6}`, 8193},
+		{"numeric string is coerced", `{"agentContextWindow": "16384"}`, 16384},
+		{"not a number falls back", `{"agentContextWindow": "abc"}`, 0},
+		{"wrong type falls back", `{"agentContextWindow": {}}`, 0},
+		{"absent falls back", `{}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := New(dir).Get()
+			if err != nil {
+				t.Fatalf("Get(%s): %v", tc.raw, err)
+			}
+			if got.AgentContextWindow != tc.want {
+				t.Fatalf("agentContextWindow from %s = %d, want %d", tc.raw, got.AgentContextWindow, tc.want)
+			}
+		})
+	}
+}
+
+// Unknown enum values fall back safely instead of pinning the runtime to a
+// mode the provider does not know.
+func TestAgentRuntimeEnumNormalisation(t *testing.T) {
+	cases := []struct {
+		raw             string
+		wantStrength    string
+		wantCompression string
+	}{
+		{`{}`, AgentThinkingAuto, AgentCompressionOff},
+		{`{"agentThinkingStrength": "auto"}`, AgentThinkingAuto, AgentCompressionOff},
+		{`{"agentThinkingStrength": "low"}`, AgentThinkingLow, AgentCompressionOff},
+		{`{"agentThinkingStrength": "medium"}`, AgentThinkingMedium, AgentCompressionOff},
+		{`{"agentThinkingStrength": "high"}`, AgentThinkingHigh, AgentCompressionOff},
+		{`{"agentContextCompression": "auto"}`, AgentThinkingAuto, AgentCompressionAuto},
+		{`{"agentThinkingStrength": "ultra"}`, AgentThinkingAuto, AgentCompressionOff},
+		{`{"agentThinkingStrength": 7}`, AgentThinkingAuto, AgentCompressionOff},
+		{`{"agentContextCompression": "always"}`, AgentThinkingAuto, AgentCompressionOff},
+		{`{"agentContextCompression": true}`, AgentThinkingAuto, AgentCompressionOff},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tc.raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := New(dir).Get()
+		if err != nil {
+			t.Fatalf("Get(%s): %v", tc.raw, err)
+		}
+		if got.AgentThinkingStrength != tc.wantStrength {
+			t.Fatalf("agentThinkingStrength from %s = %q, want %q", tc.raw, got.AgentThinkingStrength, tc.wantStrength)
+		}
+		if got.AgentContextCompression != tc.wantCompression {
+			t.Fatalf("agentContextCompression from %s = %q, want %q", tc.raw, got.AgentContextCompression, tc.wantCompression)
+		}
+	}
+}
+
+// Set normalises the agent runtime fields exactly like Get does.
+func TestSetNormalisesAgentRuntimeFields(t *testing.T) {
+	store := newStore(t)
+	strength := "ultra"
+	compression := "always"
+	got, err := store.Set(Patch{
+		AgentContextWindow:      f64p(100),
+		AgentThinkingStrength:   &strength,
+		AgentContextCompression: &compression,
+	})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AgentContextWindow != AgentContextWindowMin {
+		t.Fatalf("agentContextWindow = %d, want %d", got.AgentContextWindow, AgentContextWindowMin)
+	}
+	if got.AgentThinkingStrength != AgentThinkingAuto {
+		t.Fatalf("agentThinkingStrength = %q, want %q", got.AgentThinkingStrength, AgentThinkingAuto)
+	}
+	if got.AgentContextCompression != AgentCompressionOff {
+		t.Fatalf("agentContextCompression = %q, want %q", got.AgentContextCompression, AgentCompressionOff)
+	}
+}
+
+// A partial patch must only touch the field it carries: the other agent
+// runtime fields and the unrelated settings survive unchanged.
+func TestPartialAgentRuntimePatchKeepsOtherFields(t *testing.T) {
+	store := newStore(t)
+	strength := "medium"
+	compression := "auto"
+	if _, err := store.Set(Patch{
+		AgentContextWindow:      f64p(32768),
+		AgentThinkingStrength:   &strength,
+		AgentContextCompression: &compression,
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	onlyWindow := f64p(65536)
+	got, err := store.Set(Patch{AgentContextWindow: onlyWindow})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AgentContextWindow != 65536 {
+		t.Fatalf("agentContextWindow = %d, want 65536", got.AgentContextWindow)
+	}
+	if got.AgentThinkingStrength != AgentThinkingMedium {
+		t.Fatalf("agentThinkingStrength = %q, want %q (a partial patch must not clobber it)",
+			got.AgentThinkingStrength, AgentThinkingMedium)
+	}
+	if got.AgentContextCompression != AgentCompressionAuto {
+		t.Fatalf("agentContextCompression = %q, want %q (a partial patch must not clobber it)",
+			got.AgentContextCompression, AgentCompressionAuto)
+	}
+	if got.Language != Defaults.Language || got.TerminalFontSize != Defaults.TerminalFontSize {
+		t.Fatalf("unrelated settings changed: %+v", got)
+	}
+
+	// The persisted file keeps every field, not only the patched one.
+	raw, err := os.ReadFile(filepath.Join(store.dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file map[string]any
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatalf("persisted JSON invalid: %v (%q)", err, raw)
+	}
+	if file["agentContextWindow"] != float64(65536) ||
+		file["agentThinkingStrength"] != AgentThinkingMedium ||
+		file["agentContextCompression"] != AgentCompressionAuto {
+		t.Fatalf("persisted agent runtime mismatch: %v", file)
+	}
 }

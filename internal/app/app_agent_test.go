@@ -200,6 +200,105 @@ func TestAgentConfigForRequiresKeyAndKnownModel(t *testing.T) {
 	}
 }
 
+// The runtime settings travel with every prompt: the context window, the
+// thinking strength and the compression mode are part of the agent config
+// the runner works with.
+func TestAgentConfigForCarriesTheRuntimeSettings(t *testing.T) {
+	a, keys, _ := newAgentApp(t)
+
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	if err := keys.Set(credentials.ServiceName, agentKeyAccountFor(id), "sk-secret-value"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The defaults leave the budget to the provider.
+	cfg, err := a.agentConfigFor(id, "m")
+	if err != nil {
+		t.Fatalf("agentConfigFor: %v", err)
+	}
+	if cfg.ContextWindow != 0 {
+		t.Fatalf("context window = %d, want 0 (unlimited)", cfg.ContextWindow)
+	}
+	if cfg.ThinkingStrength != settings.AgentThinkingAuto {
+		t.Fatalf("thinking strength = %q, want %q", cfg.ThinkingStrength, settings.AgentThinkingAuto)
+	}
+	if cfg.ContextCompression != settings.AgentCompressionOff {
+		t.Fatalf("context compression = %q, want %q", cfg.ContextCompression, settings.AgentCompressionOff)
+	}
+
+	window := 32768.0
+	strength := settings.AgentThinkingHigh
+	compression := settings.AgentCompressionAuto
+	if _, err := a.SettingsSet(settings.Patch{
+		AgentContextWindow:      &window,
+		AgentThinkingStrength:   &strength,
+		AgentContextCompression: &compression,
+	}); err != nil {
+		t.Fatalf("SettingsSet: %v", err)
+	}
+
+	cfg, err = a.agentConfigFor(id, "m")
+	if err != nil {
+		t.Fatalf("agentConfigFor: %v", err)
+	}
+	if cfg.ContextWindow != 32768 {
+		t.Fatalf("context window = %d, want 32768", cfg.ContextWindow)
+	}
+	if cfg.ThinkingStrength != settings.AgentThinkingHigh {
+		t.Fatalf("thinking strength = %q, want %q", cfg.ThinkingStrength, settings.AgentThinkingHigh)
+	}
+	if cfg.ContextCompression != settings.AgentCompressionAuto {
+		t.Fatalf("context compression = %q, want %q", cfg.ContextCompression, settings.AgentCompressionAuto)
+	}
+	// The endpoint fields are untouched by the runtime settings.
+	if cfg.APIKey != "sk-secret-value" || cfg.Model != "m" || cfg.BaseURL != "https://x.test/v1" {
+		t.Fatalf("config = %+v, want the endpoint unchanged", cfg)
+	}
+}
+
+// A value the settings store cannot make sense of never reaches the agent:
+// the normalised default is used instead.
+func TestAgentConfigForUsesTheNormalisedRuntimeSettings(t *testing.T) {
+	a, keys, _ := newAgentApp(t)
+
+	got, err := a.AgentUpsertProvider(AgentProviderInput{
+		Name: "P", BaseURL: "https://x.test/v1", Models: []string{"m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := got.Providers[0].ID
+	if err := keys.Set(credentials.ServiceName, agentKeyAccountFor(id), "sk-secret-value"); err != nil {
+		t.Fatal(err)
+	}
+
+	strength := "ultra"
+	compression := "always"
+	if _, err := a.SettingsSet(settings.Patch{
+		AgentThinkingStrength:   &strength,
+		AgentContextCompression: &compression,
+	}); err != nil {
+		t.Fatalf("SettingsSet: %v", err)
+	}
+
+	cfg, err := a.agentConfigFor(id, "m")
+	if err != nil {
+		t.Fatalf("agentConfigFor: %v", err)
+	}
+	if cfg.ThinkingStrength != settings.AgentThinkingAuto {
+		t.Fatalf("thinking strength = %q, want %q", cfg.ThinkingStrength, settings.AgentThinkingAuto)
+	}
+	if cfg.ContextCompression != settings.AgentCompressionOff {
+		t.Fatalf("context compression = %q, want %q", cfg.ContextCompression, settings.AgentCompressionOff)
+	}
+}
+
 func TestAgentLegacyMigrationCopiesKeyAndPersistsProvider(t *testing.T) {
 	a, keys, dir := newAgentApp(t)
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(
