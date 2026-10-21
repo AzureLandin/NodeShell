@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { SettingsModal } from '../../src/renderer/src/components/SettingsModal'
 import { installFakeApi, renderWithI18n } from './helpers'
-import type { LanguageCode, ThemePreference } from '../../src/shared/types'
+import type { AppSettings, LanguageCode, ThemePreference } from '../../src/shared/types'
 
 /**
  * Settings surface (T1.8.3 / S2.1): font list loading from the API, change
@@ -47,6 +47,22 @@ async function expandProvider(
   name: string
 ): Promise<void> {
   await user.click(screen.getByRole('button', { name }))
+}
+
+/** Persisted settings the agent runtime section reads on open. */
+function persistedSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return {
+    language: 'en',
+    themePreference: 'system',
+    terminalFontFamily: 'Hack',
+    terminalFontSize: 14,
+    mcpIdleTimeoutMinutes: 10,
+    mcpMaxSessions: 8,
+    agentContextWindow: 0,
+    agentThinkingStrength: 'auto',
+    agentContextCompression: 'off',
+    ...overrides
+  }
 }
 
 describe('SettingsModal navigation and motion', () => {
@@ -553,5 +569,106 @@ describe('SettingsModal permissions', () => {
     await user.click(await screen.findByRole('option', { name: 'Deny' }))
 
     expect(props.onPermissionPolicyChange).toHaveBeenCalledWith('deny')
+  })
+})
+
+describe('SettingsModal agent runtime', () => {
+  it('renders the runtime controls with the persisted values', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue(
+      persistedSettings({
+        agentContextWindow: 32768,
+        agentThinkingStrength: 'medium',
+        agentContextCompression: 'auto'
+      })
+    )
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    const contextWindow = await screen.findByLabelText('Context window (estimated tokens)')
+    await waitFor(() => expect(contextWindow).toBeEnabled())
+    expect(contextWindow).toHaveValue(32768)
+    expect(screen.getByLabelText('Thinking strength')).toHaveTextContent('Medium')
+    expect(screen.getByLabelText('Context compression')).toHaveTextContent('Automatic')
+    expect(screen.getByText(/0 means unlimited/)).toBeInTheDocument()
+  })
+
+  it('falls back to the defaults when the persisted enum values are unknown', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue(
+      persistedSettings({
+        agentThinkingStrength: 'ultra' as AppSettings['agentThinkingStrength'],
+        agentContextCompression: 'always' as AppSettings['agentContextCompression']
+      })
+    )
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    const contextWindow = await screen.findByLabelText('Context window (estimated tokens)')
+    await waitFor(() => expect(contextWindow).toBeEnabled())
+    expect(screen.getByLabelText('Thinking strength')).toHaveTextContent('Automatic')
+    expect(screen.getByLabelText('Context compression')).toHaveTextContent('Off')
+  })
+
+  it('saves the context window through the settings API', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue(persistedSettings())
+    fake.mocks.settings.set.mockResolvedValue(persistedSettings())
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    const contextWindow = await screen.findByLabelText('Context window (estimated tokens)')
+    await waitFor(() => expect(contextWindow).toBeEnabled())
+    await user.clear(contextWindow)
+    await user.type(contextWindow, '65536')
+    await user.tab()
+
+    await waitFor(() =>
+      expect(fake.mocks.settings.set).toHaveBeenCalledWith({ agentContextWindow: 65536 })
+    )
+  })
+
+  it('saves the thinking strength and the compression mode', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue(persistedSettings())
+    fake.mocks.settings.set.mockResolvedValue(persistedSettings())
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    await waitFor(() => expect(screen.getByLabelText('Thinking strength')).toBeEnabled())
+    await user.click(screen.getByLabelText('Thinking strength'))
+    await user.click(await screen.findByRole('option', { name: 'High' }))
+    await waitFor(() =>
+      expect(fake.mocks.settings.set).toHaveBeenCalledWith({ agentThinkingStrength: 'high' })
+    )
+
+    await user.click(screen.getByLabelText('Context compression'))
+    await user.click(await screen.findByRole('option', { name: 'Automatic' }))
+    await waitFor(() =>
+      expect(fake.mocks.settings.set).toHaveBeenCalledWith({ agentContextCompression: 'auto' })
+    )
+  })
+
+  it('clamps a context window below the minimum before saving it', async () => {
+    const fake = installFakeApi()
+    fake.mocks.settings.get.mockResolvedValue(persistedSettings())
+    fake.mocks.settings.set.mockResolvedValue(persistedSettings())
+    renderWithI18n(<SettingsModal {...makeProps()} />)
+    const user = userEvent.setup()
+    await openCategory(user, 'Agent')
+
+    const contextWindow = await screen.findByLabelText('Context window (estimated tokens)')
+    await waitFor(() => expect(contextWindow).toBeEnabled())
+    await user.clear(contextWindow)
+    await user.type(contextWindow, '100')
+    await user.tab()
+
+    await waitFor(() =>
+      expect(fake.mocks.settings.set).toHaveBeenCalledWith({ agentContextWindow: 4096 })
+    )
   })
 })
