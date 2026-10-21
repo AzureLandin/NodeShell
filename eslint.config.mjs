@@ -15,7 +15,7 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 // and prettier/prettier as a warning backed by eslint-config-prettier.
 export default defineConfig(
   {
-    ignores: ['**/node_modules', '**/dist', '**/out', '**/wailsjs']
+    ignores: ['**/node_modules', '**/dist', '**/out', '**/wailsjs', '**/.worktrees/**']
   },
   js.configs.recommended,
   {
