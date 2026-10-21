@@ -137,9 +137,36 @@ type fakeModel struct {
 	requests [][]*schema.Message
 	// tools holds the tool schemas the agent advertised.
 	tools []*schema.ToolInfo
+	// summaries answers the non-streaming calls. The context compaction
+	// asks for its summary that way; the agent itself always streams.
+	summaries []string
+	// summaryErr fails the non-streaming call.
+	summaryErr error
+	// summaryRequests holds the messages of every non-streaming call.
+	summaryRequests [][]*schema.Message
 }
 
+// Generate answers the non-streaming calls. The agent itself always streams,
+// so this is the path the context compaction takes.
 func (f *fakeModel) Generate(ctx context.Context, in []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	f.mu.Lock()
+	queued := len(f.summaries) > 0
+	text := ""
+	if queued {
+		text = f.summaries[0]
+		f.summaries = f.summaries[1:]
+	}
+	err := f.summaryErr
+	if queued || err != nil {
+		f.summaryRequests = append(f.summaryRequests, in)
+	}
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if queued {
+		return schema.AssistantMessage(text, nil), nil
+	}
 	turn, err := f.next(in, opts)
 	if err != nil {
 		return nil, err
@@ -235,6 +262,27 @@ func (f *fakeModel) advertisedTools() []*schema.ToolInfo {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.tools
+}
+
+// setSummaries scripts the answers of the compaction calls.
+func (f *fakeModel) setSummaries(s ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.summaries = s
+}
+
+// failSummary makes the compaction call fail.
+func (f *fakeModel) failSummary(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.summaryErr = err
+}
+
+// summaryCalls returns the messages of the compaction calls.
+func (f *fakeModel) summaryCalls() [][]*schema.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]*schema.Message(nil), f.summaryRequests...)
 }
 
 // --- fake tools ---
@@ -347,6 +395,12 @@ type harness struct {
 	sink  *recSink
 	tools *fakeTools
 	model *fakeModel
+
+	mu sync.Mutex
+	// configs holds the configuration every model factory call saw, in
+	// order: the run itself and, when the transcript is compacted, the
+	// summary request.
+	configs []Config
 }
 
 func newHarness(t *testing.T, turns []fakeTurn, tweak func(*Deps)) *harness {
@@ -359,7 +413,10 @@ func newHarness(t *testing.T, turns []fakeTurn, tweak func(*Deps)) *harness {
 	deps := Deps{
 		Tools: h.tools,
 		Sink:  h.sink,
-		Model: func(context.Context, Config) (model.ToolCallingChatModel, error) {
+		Model: func(_ context.Context, cfg Config) (model.ToolCallingChatModel, error) {
+			h.mu.Lock()
+			h.configs = append(h.configs, cfg)
+			h.mu.Unlock()
 			return h.model, nil
 		},
 		RequestTimeout: 5 * time.Second,
@@ -373,12 +430,32 @@ func newHarness(t *testing.T, turns []fakeTurn, tweak func(*Deps)) *harness {
 	return h
 }
 
+// seenConfigs returns the configurations the model factory was called with.
+func (h *harness) seenConfigs() []Config {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Config(nil), h.configs...)
+}
+
 func (h *harness) cfg() Config {
 	return Config{BaseURL: "https://model.test/v1", Model: "test-model", APIKey: "sk-test-key"}
 }
 
 func (h *harness) prompt(sessionID, title, text string) error {
 	return h.svc.Prompt(sessionID, title, text, h.cfg())
+}
+
+// seedHistory puts a transcript into a session, so a test can start from a
+// conversation that already fills the context window.
+func (h *harness) seedHistory(sessionID string, msgs []chatMessage) {
+	h.svc.mu.Lock()
+	defer h.svc.mu.Unlock()
+	c := h.svc.convs[sessionID]
+	if c == nil {
+		c = &conversation{}
+		h.svc.convs[sessionID] = c
+	}
+	c.messages = append(c.messages, msgs...)
 }
 
 // history returns the transcript of a session.

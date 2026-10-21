@@ -27,17 +27,43 @@ const defaultMaxIterations = 20
 // The NodeShell transcript stays the source of truth: it is replayed to the
 // agent as the model input, and whatever the agent produced is handed back so
 // the caller can append it.
+//
+// A provider that refuses the reasoning parameter is given a second chance
+// without it: the run continues instead of failing over a parameter the
+// model does not know.
 func (s *Service) runEino(ctx context.Context, sessionID, title string, cfg Config, c *conversation) ([]chatMessage, error) {
+	produced, err := s.runEinoAttempt(ctx, sessionID, title, cfg, c)
+	if err == nil {
+		return produced, nil
+	}
+	// Only a run that produced nothing is retried: nothing was executed and
+	// the transcript is untouched, so the second attempt starts from the
+	// same place.
+	if len(produced) > 0 || !reasoningRejected(err) {
+		return produced, mapRunError(err, cfg, s.maxIterations())
+	}
+	fallback := cfg
+	fallback.ThinkingStrength = ThinkingAuto
+	produced, retryErr := s.runEinoAttempt(ctx, sessionID, title, fallback, c)
+	if retryErr != nil {
+		return produced, mapRunError(retryErr, fallback, s.maxIterations())
+	}
+	return produced, nil
+}
+
+// runEinoAttempt runs the Eino agent once and returns the raw error, so the
+// caller can tell a provider rejection apart from any other failure.
+func (s *Service) runEinoAttempt(ctx context.Context, sessionID, title string, cfg Config, c *conversation) ([]chatMessage, error) {
 	chatModel, err := s.model(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	history := toSchemaMessages(s.snapshot(c))
+	instruction, history := modelInput(title, s.snapshot(c))
 
 	einoAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        einoAgentName,
 		Description: "The NodeShell in-app assistant for one SSH session.",
-		Instruction: systemPrompt(title),
+		Instruction: instruction,
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
@@ -91,7 +117,7 @@ func (s *Service) runEino(ctx context.Context, sessionID, title string, cfg Conf
 			break
 		}
 		if event.Err != nil {
-			return produced, mapRunError(event.Err, cfg, s.maxIterations())
+			return produced, event.Err
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
@@ -101,10 +127,24 @@ func (s *Service) runEino(ctx context.Context, sessionID, title string, cfg Conf
 			produced = append(produced, fromSchemaMessage(msg))
 		}
 		if msgErr != nil {
-			return produced, mapRunError(msgErr, cfg, s.maxIterations())
+			return produced, msgErr
 		}
 	}
 	return produced, nil
+}
+
+// modelInput splits the transcript into the instruction and the messages the
+// model sees. A compacted transcript starts with its summary; that summary
+// belongs to the system prompt, so the model reads one system message
+// instead of two.
+func modelInput(title string, history []chatMessage) (string, []*schema.Message) {
+	instruction := systemPrompt(title)
+	msgs := history
+	if len(msgs) > 0 && msgs[0].Role == roleSystem {
+		instruction = instruction + "\n\n" + msgs[0].Content
+		msgs = msgs[1:]
+	}
+	return instruction, toSchemaMessages(msgs)
 }
 
 // buildTools binds the remote tools to the session the prompt named.

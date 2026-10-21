@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
@@ -18,9 +19,26 @@ type ModelFactory func(ctx context.Context, cfg Config) (model.ToolCallingChatMo
 // part of the model name, the base URL or any message.
 func newOpenAIModel(ctx context.Context, cfg Config, client *http.Client) (model.ToolCallingChatModel, error) {
 	return openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		BaseURL:    cfg.BaseURL,
-		Model:      cfg.Model,
-		APIKey:     cfg.APIKey,
-		HTTPClient: client,
+		BaseURL:         cfg.BaseURL,
+		Model:           cfg.Model,
+		APIKey:          cfg.APIKey,
+		HTTPClient:      client,
+		ReasoningEffort: reasoningEffort(cfg.ThinkingStrength),
 	})
+}
+
+// reasoningEffort maps the configured thinking strength onto the provider's
+// reasoning parameter. "auto" - and anything unknown - leaves the parameter
+// unset, so the provider decides how much it thinks.
+func reasoningEffort(strength string) openai.ReasoningEffortLevel {
+	switch strings.ToLower(strings.TrimSpace(strength)) {
+	case ThinkingLow:
+		return openai.ReasoningEffortLevelLow
+	case ThinkingMedium:
+		return openai.ReasoningEffortLevelMedium
+	case ThinkingHigh:
+		return openai.ReasoningEffortLevelHigh
+	default:
+		return ""
+	}
 }

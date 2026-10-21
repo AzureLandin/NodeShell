@@ -7,8 +7,10 @@
 //
 // The package deliberately implements only the loop (prompt -> stream ->
 // tools -> stream) and none of the extras a full coding agent ships: no local
-// filesystem access, no skills or extensions, no sub-agents and no context
-// compaction beyond a plain transcript cap.
+// filesystem access, no skills or extensions and no sub-agents. It does keep
+// one conversation inside a context window: when the user configured a
+// budget, the older turns are compacted into a summary before the request
+// leaves NodeShell.
 package agent
 
 import (
@@ -72,6 +74,16 @@ type Config struct {
 	BaseURL string
 	Model   string
 	APIKey  string
+	// ContextWindow is the estimated token budget of one conversation.
+	// 0 means unlimited: the provider's own model limit applies and the
+	// runtime never compacts the transcript.
+	ContextWindow int
+	// ThinkingStrength is the reasoning effort asked of the provider:
+	// auto (the provider decides), low, medium or high.
+	ThinkingStrength string
+	// ContextCompression is off (no automatic compaction) or auto (the
+	// runtime compacts the transcript when the budget runs out).
+	ContextCompression string
 }
 
 // ErrNotConfigured is the pre-flight rejection for a missing API key or
@@ -256,6 +268,14 @@ func (s *Service) Prompt(sessionID, title, text string, cfg Config) error {
 		strings.TrimSpace(cfg.BaseURL) == "" {
 		return ErrNotConfigured
 	}
+	// A prompt that cannot fit the context window is rejected like an
+	// oversized one: no compaction can make room for it.
+	if contextLimit(cfg.ContextWindow) > 0 {
+		own := []chatMessage{{Role: roleUser, Content: prompt}}
+		if estimateContextTokens(systemPrompt(title), own) > contextLimit(cfg.ContextWindow) {
+			return errf(apperror.Unknown, "Prompt does not fit the context window")
+		}
+	}
 
 	s.mu.Lock()
 	if s.closed {
@@ -392,7 +412,11 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, sessionID,
 // back into the NodeShell transcript. The transcript stays the source of
 // truth: it is replayed to the agent, and the agent's assistant and tool
 // messages are appended to it afterwards.
+//
+// A transcript that outgrows the configured context window is compacted
+// first, so the request that leaves NodeShell fits the provider's window.
 func (s *Service) loop(ctx context.Context, sessionID, title string, cfg Config, c *conversation) error {
+	s.prepareContext(ctx, sessionID, title, cfg, c)
 	produced, err := s.runEino(ctx, sessionID, title, cfg, c)
 	s.appendAll(c, produced)
 	return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -13,6 +14,29 @@ import (
 	"nodeshell/internal/apperror"
 )
 
+// reasoningRejected reports whether a provider refused the request because of
+// the reasoning parameter. Such a provider is given a second chance without
+// the parameter instead of failing the run.
+//
+// The check is narrow on purpose: only a rejected request that names the
+// reasoning parameter counts, so an unrelated provider error is never retried
+// and never hidden.
+func reasoningRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *openai.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.HTTPStatusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusNotFound:
+	default:
+		return false
+	}
+	return strings.Contains(strings.ToLower(apiErr.Message), "reasoning")
+}
+
 // mapRunError turns a failure of the Eino run into a coded error the UI can
 // show. The provider message is kept because it is what makes a wrong model
 // or a rejected key diagnosable, but it is bounded and the configured API key
@@ -20,6 +44,11 @@ import (
 func mapRunError(err error, cfg Config, maxIterations int) error {
 	if err == nil {
 		return nil
+	}
+	// An error the agent already coded keeps its own message.
+	var coded *Error
+	if errors.As(err, &coded) {
+		return coded
 	}
 	// A cancelled context is the user pressing stop, not a failure.
 	if errors.Is(err, context.Canceled) {
