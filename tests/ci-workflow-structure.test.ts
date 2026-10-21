@@ -92,9 +92,13 @@ describe('CI packaging', () => {
     expect(ci).toMatch(/ditto|zip|\.zip/)
   })
 
-  it('Linux job produces AppImage and deb', () => {
+  it('Linux job produces AppImage, deb, pacman and rpm packages', () => {
     expect(ci).toMatch(/appimagetool|AppImage/)
     expect(ci).toMatch(/nfpm|\.deb/)
+    expect(ci).toContain('build/bin/*.rpm')
+    expect(ci).toContain('build/bin/*.pkg.tar.zst')
+    expect(ci).toContain('Verify Linux package artifacts')
+    expect(ci).toContain('for ext in AppImage deb rpm pkg.tar.zst')
   })
 
   it('never references secrets inside step-level if conditions', () => {
