@@ -1,9 +1,9 @@
 // Package agent runs a small tool-calling assistant against one already
 // connected SSH session. It owns no transport of its own: the LLM is reached
-// over an OpenAI-compatible HTTP endpoint, and every tool the model may call
-// is served through BoundCaller → mcpcli.Runtime.Call, with the current
-// session injected so the assistant can only ever touch the remote host the
-// user is already looking at.
+// over an OpenAI-compatible HTTP endpoint through the Eino ADK, and every tool
+// the model may call is served through BoundCaller → mcpcli.Runtime.Call, with
+// the current session injected so the assistant can only ever touch the remote
+// host the user is already looking at.
 //
 // The package deliberately implements only the loop (prompt -> stream ->
 // tools -> stream) and none of the extras a full coding agent ships: no local
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cloudwego/eino/components/model"
 
 	"nodeshell/internal/apperror"
 	"nodeshell/internal/mcpcli"
@@ -132,12 +134,20 @@ type ErrorEvent struct {
 }
 
 // Deps wires a Service. MaxTurns > 0 sets an explicit assistant turn limit
-// (used in tests); zero (the default) means unlimited turns. Zero timeouts
-// fall back to the package defaults.
+// (used in tests); zero (the default) means the Eino default budget of 20
+// iterations. Zero timeouts fall back to the package defaults.
 type Deps struct {
-	Tools          ToolCaller
-	Sink           EventSink
-	Client         *http.Client
+	Tools ToolCaller
+	Sink  EventSink
+	// Client is the HTTP client the provider requests go through. A nil
+	// client means a plain http.Client without a timeout of its own; the
+	// request timeout is applied per request instead.
+	Client *http.Client
+	// Model builds the chat model for one run. It is the seam the tests use:
+	// a factory that returns a scripted model keeps every test off the
+	// network. A nil factory means the OpenAI-compatible model built from
+	// the run's Config.
+	Model          ModelFactory
 	MaxTurns       int
 	ExecTimeout    time.Duration
 	RequestTimeout time.Duration
@@ -164,6 +174,7 @@ type Service struct {
 	tools          ToolCaller
 	sink           EventSink
 	client         *http.Client
+	model          ModelFactory
 	maxTurns       int
 	execTimeout    time.Duration
 	requestTimeout time.Duration
@@ -181,7 +192,7 @@ func New(d Deps) *Service {
 		d.Sink = nopSink{}
 	}
 	if d.Client == nil {
-		// No client-level timeout: each request is bounded by its own context
+		// No client-level timeout: each request is bounded by its own budget
 		// so a long stream is not cut off mid-answer.
 		d.Client = &http.Client{}
 	}
@@ -194,7 +205,8 @@ func New(d Deps) *Service {
 	if d.RequestTimeout <= 0 {
 		d.RequestTimeout = DefaultRequestTimeout
 	}
-	return &Service{
+	factory := d.Model
+	svc := &Service{
 		tools:          d.Tools,
 		sink:           d.Sink,
 		client:         d.Client,
@@ -203,6 +215,23 @@ func New(d Deps) *Service {
 		requestTimeout: d.RequestTimeout,
 		convs:          make(map[string]*conversation),
 	}
+	if factory != nil {
+		svc.model = factory
+	} else {
+		svc.model = svc.openAIModel
+	}
+	return svc
+}
+
+// openAIModel builds the provider model for one run. The request timeout
+// bounds one provider request, stream included, so it belongs on the client
+// of that request.
+func (s *Service) openAIModel(ctx context.Context, cfg Config) (model.ToolCallingChatModel, error) {
+	client := *s.client
+	if client.Timeout == 0 {
+		client.Timeout = s.requestTimeout
+	}
+	return newOpenAIModel(ctx, cfg, &client)
 }
 
 // Prompt accepts one user message for the session and starts a run in the
@@ -359,50 +388,14 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, sessionID,
 	s.emitIfCurrent(sessionID, c, EventDone, DoneEvent{SessionID: sessionID, Aborted: aborted})
 }
 
-// loop alternates streamed assistant turns and tool execution until the model
-// answers without tool calls. When maxTurns > 0, reaching the turn limit is
-// an observable error, never a silent stop.
+// loop hands the prompt to the Eino agent and folds whatever it produced
+// back into the NodeShell transcript. The transcript stays the source of
+// truth: it is replayed to the agent, and the agent's assistant and tool
+// messages are appended to it afterwards.
 func (s *Service) loop(ctx context.Context, sessionID, title string, cfg Config, c *conversation) error {
-	for turn := 0; ; turn++ {
-		if s.maxTurns > 0 && turn >= s.maxTurns {
-			return errf(apperror.Unknown, "Agent stopped after %d steps without finishing", s.maxTurns)
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		msgs := s.snapshot(c, title)
-		reqCtx, cancelReq := context.WithTimeout(ctx, s.requestTimeout)
-		res, err := s.stream(reqCtx, cfg, msgs, func(delta string) {
-			s.emitIfCurrent(sessionID, c, EventDelta, DeltaEvent{SessionID: sessionID, Delta: delta})
-		})
-		cancelReq()
-		if err != nil {
-			return err
-		}
-		s.append(c, assistantMessage(res))
-		if len(res.toolCalls) == 0 {
-			return nil
-		}
-		for _, call := range res.toolCalls {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			out, summary, ok := s.runTool(ctx, sessionID, title, call)
-			detail := ""
-			if !ok {
-				detail = firstLine(out)
-			}
-			s.emitIfCurrent(sessionID, c, EventTool, ToolEvent{
-				SessionID: sessionID,
-				CallID:    call.ID,
-				Name:      call.Function.Name,
-				Summary:   summary,
-				OK:        ok,
-				Detail:    detail,
-			})
-			s.append(c, chatMessage{Role: roleTool, ToolCallID: call.ID, Content: out})
-		}
-	}
+	produced, err := s.runEino(ctx, sessionID, title, cfg, c)
+	s.appendAll(c, produced)
+	return err
 }
 
 // emitIfCurrent drops events for a run that has been Clear'd, Dispose'd or
@@ -418,21 +411,24 @@ func (s *Service) emitIfCurrent(sessionID string, c *conversation, event string,
 	}
 }
 
-// snapshot returns the system prompt followed by a copy of the transcript, so
-// the request is built from a stable view even if the conversation is cleared
-// while the request is in flight.
-func (s *Service) snapshot(c *conversation, title string) []chatMessage {
+// snapshot returns a copy of the transcript, so the request is built from a
+// stable view even if the conversation is cleared while the request is in
+// flight. The system prompt is not part of it: the Eino agent carries it as
+// its instruction.
+func (s *Service) snapshot(c *conversation) []chatMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	msgs := make([]chatMessage, 0, len(c.messages)+1)
-	msgs = append(msgs, chatMessage{Role: roleSystem, Content: systemPrompt(title)})
-	return append(msgs, c.messages...)
+	return append([]chatMessage(nil), c.messages...)
 }
 
-func (s *Service) append(c *conversation, msg chatMessage) {
+// appendAll folds the messages of one run back into the transcript.
+func (s *Service) appendAll(c *conversation, msgs []chatMessage) {
+	if len(msgs) == 0 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c.messages = trimHistory(append(c.messages, msg))
+	c.messages = trimHistory(append(c.messages, msgs...))
 }
 
 // reconcile answers any tool call the run left open. A run stopped between the
