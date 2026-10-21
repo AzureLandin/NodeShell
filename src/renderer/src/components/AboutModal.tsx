@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ModalShell, useModalClose } from './ModalShell'
+import { DialogTitle } from '../ui/dialog'
 import logoUrl from '../assets/logo.png'
 
 interface AboutModalProps {
@@ -23,9 +24,9 @@ function AboutModalBody({ onBack }: { onBack?: () => void }): React.JSX.Element 
   return (
     <>
       <div className="settings-modal-header">
-        <h3 id="about-modal-title" className="modal-title">
+        <DialogTitle id="about-modal-title" className="modal-title">
           {t('about.title')}
-        </h3>
+        </DialogTitle>
         <button
           type="button"
           className="settings-modal-close"
