@@ -2,14 +2,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SftpPanel } from '../../src/renderer/src/components/SftpPanel'
-import { SftpTextEditorModal } from '../../src/renderer/src/components/SftpTextEditorModal'
+import { SftpPanel } from '../../src/renderer/src/features/sftp/SftpPanel'
+import { SftpTextEditorModal } from '../../src/renderer/src/features/sftp/SftpTextEditorModal'
 import { MAX_EDITABLE_TEXT_BYTES } from '../../src/shared/editable-text'
-import { installFakeApi, renderWithI18n } from './helpers'
+import { installFakeApi, renderWithI18n } from '../support/helpers'
 
 // Keep modal tests focused on load/save/dirty; CodeMirror is covered lightly
 // via language unit tests and would need a heavier DOM harness here.
-vi.mock('../../src/renderer/src/components/SftpCodeEditor', () => ({
+vi.mock('../../src/renderer/src/features/sftp/SftpCodeEditor', () => ({
   SftpCodeEditor: ({
     initialValue,
     onChange,
@@ -83,7 +83,7 @@ describe('SftpPanel text editing', () => {
     fireEvent.doubleClick(screen.getByText('readme.md'))
 
     await waitFor(() =>
-      expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', 'readme.md')
+      expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', '/home/user/readme.md')
     )
     expect(await screen.findByDisplayValue('hello')).toBeInTheDocument()
     expect(fake.mocks.transfer.chooseDownloadTarget).not.toHaveBeenCalled()
@@ -97,7 +97,11 @@ describe('SftpPanel text editing', () => {
     fireEvent.doubleClick(screen.getByText('photo.png'))
 
     await waitFor(() =>
-      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith('s1', '/home/user/photo.png', 'photo.png')
+      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith(
+        's1',
+        '/home/user/photo.png',
+        'photo.png'
+      )
     )
     expect(fake.mocks.sftp.readText).not.toHaveBeenCalled()
   })
@@ -114,9 +118,13 @@ describe('SftpPanel text editing', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
 
     await waitFor(() =>
-      expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', 'photo.png')
+      expect(fake.mocks.sftp.readText).toHaveBeenCalledWith('s1', '/home/user/photo.png')
     )
     expect(await screen.findByDisplayValue('PNG')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
+    )
   })
 
   it('refuses to open files over the 512KiB GUI cap', async () => {
@@ -299,8 +307,6 @@ describe('SftpTextEditorModal', () => {
       fireEvent.keyDown(window, { key: 's', ctrlKey: true })
     })
 
-    await waitFor(() =>
-      expect(fake.mocks.sftp.writeText).toHaveBeenCalledWith('s1', 'a.py', 'ab')
-    )
+    await waitFor(() => expect(fake.mocks.sftp.writeText).toHaveBeenCalledWith('s1', 'a.py', 'ab'))
   })
 })

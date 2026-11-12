@@ -1,6 +1,5 @@
 import { AlertDialog as BaseAlertDialog } from '@base-ui/react/alert-dialog'
-import type { MouseEventHandler, PointerEventHandler, ReactNode, Ref } from 'react'
-import type { DialogChangeDetails, DialogClassName, DialogFocusTarget } from './dialog'
+import type { DialogClassName } from './dialog'
 import './dialog.css'
 
 /**
@@ -10,169 +9,73 @@ import './dialog.css'
  * outside press, so backdrop handling stays with the caller.
  */
 
-export interface AlertDialogRootProps {
-  /** Whether the alert dialog is open. */
-  open: boolean
-  /** Called whenever the alert dialog wants to open or close. */
-  onOpenChange: (open: boolean, details: DialogChangeDetails) => void
-  /** Called once the enter/exit transition of the alert dialog finished. */
-  onOpenChangeComplete?: (open: boolean) => void
-  children?: ReactNode
+export type AlertDialogRootProps = Omit<BaseAlertDialog.Root.Props, 'open' | 'onOpenChange'> & {
+  open: NonNullable<BaseAlertDialog.Root.Props['open']>
+  onOpenChange: NonNullable<BaseAlertDialog.Root.Props['onOpenChange']>
 }
 
-export function AlertDialogRoot({
-  open,
-  onOpenChange,
-  onOpenChangeComplete,
-  children
-}: AlertDialogRootProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Root
-      open={open}
-      onOpenChange={onOpenChange}
-      onOpenChangeComplete={onOpenChangeComplete}
-    >
-      {children}
-    </BaseAlertDialog.Root>
-  )
+export function AlertDialogRoot(props: AlertDialogRootProps): React.JSX.Element {
+  return <BaseAlertDialog.Root {...props} />
 }
 
-export interface AlertDialogPortalProps {
-  children?: ReactNode
+export type AlertDialogPortalProps = BaseAlertDialog.Portal.Props
+
+export function AlertDialogPortal(props: AlertDialogPortalProps): React.JSX.Element {
+  return <BaseAlertDialog.Portal {...props} />
 }
 
-export function AlertDialogPortal({ children }: AlertDialogPortalProps): React.JSX.Element {
-  return <BaseAlertDialog.Portal>{children}</BaseAlertDialog.Portal>
-}
-
-export interface AlertDialogBackdropProps {
+export type AlertDialogBackdropProps = Omit<
+  BaseAlertDialog.Backdrop.Props,
+  'className' | 'forceRender'
+> & {
   className?: DialogClassName
   /** Render the backdrop even when the alert dialog is nested inside another one. */
-  forceRender?: boolean
-  onClick?: MouseEventHandler<HTMLDivElement>
-  onPointerDown?: PointerEventHandler<HTMLDivElement>
-  children?: ReactNode
+  forceRender?: BaseAlertDialog.Backdrop.Props['forceRender']
 }
 
 export function AlertDialogBackdrop({
   className,
-  forceRender = false,
-  onClick,
-  onPointerDown,
-  children
+  ...props
 }: AlertDialogBackdropProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Backdrop
-      className={className}
-      forceRender={forceRender}
-      onClick={onClick}
-      onPointerDown={onPointerDown}
-    >
-      {children}
-    </BaseAlertDialog.Backdrop>
-  )
+  return <BaseAlertDialog.Backdrop {...props} className={className} />
 }
 
-export interface AlertDialogViewportProps {
+export type AlertDialogViewportProps = Omit<BaseAlertDialog.Viewport.Props, 'className'> & {
   className?: DialogClassName
-  children?: ReactNode
 }
 
 export function AlertDialogViewport({
   className,
-  children
+  ...props
 }: AlertDialogViewportProps): React.JSX.Element {
-  return <BaseAlertDialog.Viewport className={className}>{children}</BaseAlertDialog.Viewport>
+  return <BaseAlertDialog.Viewport {...props} className={className} />
 }
 
-export interface AlertDialogPopupProps {
+export type AlertDialogPopupProps = Omit<BaseAlertDialog.Popup.Props, 'className' | 'render'> & {
   className?: DialogClassName
-  children?: ReactNode
-  id?: string
-  ref?: Ref<HTMLDivElement>
-  'aria-labelledby'?: string
-  'aria-modal'?: boolean | 'true' | 'false'
-  /** Element focused when the alert dialog opens. Defaults to the first focusable child. */
-  initialFocus?: DialogFocusTarget
-  /** Element focused when the alert dialog closes. Defaults to the previously focused element. */
-  finalFocus?: DialogFocusTarget
 }
 
 export function AlertDialogPopup({
   className,
-  children,
-  id,
-  ref,
-  initialFocus,
-  finalFocus,
-  'aria-labelledby': ariaLabelledBy,
-  'aria-modal': ariaModal
+  ...props
 }: AlertDialogPopupProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Popup
-      className={className}
-      id={id}
-      ref={ref}
-      initialFocus={initialFocus}
-      finalFocus={finalFocus}
-      aria-labelledby={ariaLabelledBy}
-      aria-modal={ariaModal}
-    >
-      {children}
-    </BaseAlertDialog.Popup>
-  )
+  return <BaseAlertDialog.Popup {...props} className={className} />
 }
 
-export interface AlertDialogTitleProps {
-  className?: string
-  id?: string
-  children?: ReactNode
+export type AlertDialogTitleProps = Omit<BaseAlertDialog.Title.Props, 'render'>
+
+export function AlertDialogTitle(props: AlertDialogTitleProps): React.JSX.Element {
+  return <BaseAlertDialog.Title {...props} render={<h3 />} />
 }
 
-export function AlertDialogTitle({
-  className,
-  id,
-  children
-}: AlertDialogTitleProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Title className={className} id={id} render={<h3 />}>
-      {children}
-    </BaseAlertDialog.Title>
-  )
+export type AlertDialogDescriptionProps = BaseAlertDialog.Description.Props
+
+export function AlertDialogDescription(props: AlertDialogDescriptionProps): React.JSX.Element {
+  return <BaseAlertDialog.Description {...props} />
 }
 
-export interface AlertDialogDescriptionProps {
-  className?: string
-  id?: string
-  children?: ReactNode
-}
+export type AlertDialogCloseProps = BaseAlertDialog.Close.Props
 
-export function AlertDialogDescription({
-  className,
-  id,
-  children
-}: AlertDialogDescriptionProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Description className={className} id={id}>
-      {children}
-    </BaseAlertDialog.Description>
-  )
-}
-
-export interface AlertDialogCloseProps {
-  className?: string
-  children?: ReactNode
-  onClick?: MouseEventHandler<HTMLButtonElement>
-}
-
-export function AlertDialogClose({
-  className,
-  children,
-  onClick
-}: AlertDialogCloseProps): React.JSX.Element {
-  return (
-    <BaseAlertDialog.Close className={className} onClick={onClick}>
-      {children}
-    </BaseAlertDialog.Close>
-  )
+export function AlertDialogClose(props: AlertDialogCloseProps): React.JSX.Element {
+  return <BaseAlertDialog.Close {...props} />
 }

@@ -2,8 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AgentMarkdown } from '../../src/renderer/src/components/AgentMarkdown'
-import { installFakeApi, renderWithI18n } from './helpers'
+import { AgentMarkdown } from '../../src/renderer/src/features/agent/AgentMarkdown'
+import { installFakeApi, renderWithI18n } from '../support/helpers'
 
 /**
  * Assistant markdown: GFM rendering, no raw HTML, no remote images, and
@@ -20,17 +20,7 @@ function renderMarkdown(text: string): ReturnType<typeof installFakeApi> {
 describe('AgentMarkdown rendering', () => {
   it('renders headings, emphasis, lists and fenced code', () => {
     renderMarkdown(
-      [
-        '## Disk',
-        '',
-        'Looks **fine**.',
-        '',
-        '- `/` is 40%',
-        '',
-        '```sh',
-        'df -h',
-        '```'
-      ].join('\n')
+      ['## Disk', '', 'Looks **fine**.', '', '- `/` is 40%', '', '```sh', 'df -h', '```'].join('\n')
     )
 
     expect(screen.getByRole('heading', { level: 2, name: 'Disk' })).toBeInTheDocument()

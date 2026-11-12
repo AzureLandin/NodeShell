@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../src/renderer/src/App'
-import { emitSessionEvent, installFakeApi, renderWithI18n, type FakeApi } from './helpers'
+import { emitSessionEvent, installFakeApi, renderWithI18n, type FakeApi } from '../support/helpers'
 import type { AppSettings, HostConfig } from '../../src/shared/types'
 
 /**
@@ -24,6 +24,7 @@ vi.mock('@xterm/xterm', () => {
     write = vi.fn()
     dispose = vi.fn()
     onData = vi.fn(() => ({ dispose: vi.fn() }))
+    attachCustomKeyEventHandler = vi.fn()
   }
   return { Terminal: MockTerminal }
 })
@@ -131,6 +132,7 @@ describe('App connect flow', () => {
     expect(within(passwordModal()).getByRole('alert')).toHaveTextContent(
       'Authentication failed: incorrect username or password'
     )
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Password'), 'pw1')
     await user.click(within(passwordModal()).getByRole('button', { name: 'Connect' }))
@@ -301,6 +303,155 @@ describe('App connect flow', () => {
   })
 })
 
+describe('App notifications', () => {
+  it('reports a coded connection failure through one localized notification', async () => {
+    const fake = await renderApp([makeHost()])
+    fake.mocks.sessions.connect.mockRejectedValue(
+      backendError('CONNECTION_REFUSED', 'dial refused')
+    )
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Connection refused: confirm example.com:22 is correct and SSH is listening'
+    )
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.queryByText(/NODESHELL_ERR/)).not.toBeInTheDocument()
+  })
+
+  it('normalizes credential IPC failures before publishing them', async () => {
+    const fake = await renderApp([makeHost({ credentialsPrompted: false })])
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 's1' })
+    fake.mocks.credentials.isAvailable.mockResolvedValue(true)
+    fake.mocks.credentials.save.mockRejectedValue(backendError('UNKNOWN', 'credential save denied'))
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('heading', { name: 'Save credentials' })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('credential save denied')
+    expect(screen.queryByText(/NODESHELL_ERR/)).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'My server' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps a connected session and permits another credential prompt after skipping fails', async () => {
+    const fake = await renderApp([makeHost({ credentialsPrompted: false })])
+    fake.mocks.sessions.connect
+      .mockResolvedValueOnce({ sessionId: 's1' })
+      .mockResolvedValueOnce({ sessionId: 's2' })
+    fake.mocks.credentials.markPrompted
+      .mockRejectedValueOnce(backendError('UNKNOWN', 'credential preference denied'))
+      .mockResolvedValueOnce(undefined)
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('heading', { name: 'Save credentials' })
+    await user.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('credential preference denied')
+    expect(screen.queryByText(/NODESHELL_ERR/)).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'My server' })).toHaveAttribute('aria-selected', 'true')
+    expect(fake.mocks.sessions.disconnect).not.toHaveBeenCalled()
+    await user.click(within(screen.getByRole('status')).getByRole('button', { name: 'Dismiss' }))
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('heading', { name: 'Save credentials' })
+    await user.click(screen.getByRole('button', { name: 'Not now' }))
+    await waitFor(() => expect(fake.mocks.credentials.markPrompted).toHaveBeenCalledTimes(2))
+    expect(fake.mocks.sessions.connect).toHaveBeenCalledTimes(2)
+    expect(fake.mocks.credentials.save).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('replaces messages across settings and session events, and dismisses without changing session errors', async () => {
+    const fake = await renderApp([makeHost()])
+    const user = userEvent.setup()
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 's1' })
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('tab', { name: 'My server' })
+    act(() => {
+      emitSessionEvent(fake, 'error', {
+        sessionId: 's1',
+        error: { code: 'UNKNOWN', message: 'first connection reset' }
+      })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('first connection reset')
+
+    fake.mocks.settings.set.mockRejectedValue(new Error('settings write failed'))
+    const rail = document.querySelector('.icon-rail') as HTMLElement
+    await user.click(within(rail).getByRole('button', { name: 'Settings' }))
+    await user.click(screen.getByRole('button', { name: 'General' }))
+    const theme = screen.getByLabelText('Theme')
+    await user.click(theme)
+    await user.click(await screen.findByRole('option', { name: 'Light' }))
+    await waitFor(() =>
+      expect(fake.mocks.settings.set).toHaveBeenCalledWith({ themePreference: 'light' })
+    )
+    expect(theme).toHaveTextContent('System')
+    expect(await screen.findByRole('status')).toHaveTextContent('Connection failed')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const notification = screen.getByRole('status')
+    await user.click(within(notification).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    expect(screen.getByRole('alert')).toHaveTextContent('first connection reset')
+    await user.click(within(rail).getByRole('button', { name: 'Hide monitor' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    act(() => {
+      emitSessionEvent(fake, 'error', {
+        sessionId: 's1',
+        error: { code: 'UNKNOWN', message: 'first connection reset' }
+      })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('first connection reset')
+    expect(fake.mocks.sessions.onError).toHaveBeenCalledTimes(1)
+    expect(document.querySelectorAll('[data-bui-toast-viewport]')).toHaveLength(1)
+  })
+
+  it('shows a generic reconnect failure once while preserving the existing terminal', async () => {
+    const fake = await renderApp([makeHost()])
+    const user = userEvent.setup()
+    fake.mocks.sessions.connect.mockResolvedValueOnce({ sessionId: 's1' })
+    await openHostsPicker(user)
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('tab', { name: 'My server' })
+    act(() => emitSessionEvent(fake, 'closed', { sessionId: 's1' }))
+    fake.mocks.sessions.connect.mockRejectedValueOnce(new Error('reconnect transport broke'))
+    await user.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('reconnect transport broke')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent('reconnect transport broke')
+    expect(screen.getByRole('tab', { name: 'My server' })).toHaveAttribute('aria-selected', 'true')
+    expect(fake.mocks.sessions.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('keeps host-list failures local with explicit retry and no repeated background notification', async () => {
+    const fake = installFakeApi()
+    fake.mocks.hosts.list.mockRejectedValue(new Error('hosts file unreadable'))
+    fake.mocks.settings.get.mockResolvedValue(defaultSettings())
+    renderWithI18n(<App />)
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent('hosts file unreadable')
+    expect(screen.queryByText('No saved hosts yet')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-bui-toast-root]')).not.toBeInTheDocument()
+    const calls = fake.mocks.hosts.list.mock.calls.length
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const rail = document.querySelector('.icon-rail') as HTMLElement
+    await user.click(within(rail).getByRole('button', { name: 'Hide monitor' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(fake.mocks.hosts.list).toHaveBeenCalledTimes(calls)
+    fake.mocks.hosts.list.mockResolvedValue([])
+    await openHostsPicker(user)
+    expect(await screen.findByText('No saved hosts yet')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
 describe('App tab switching', () => {
   it('switches the active tab and closing a tab disconnects the session', async () => {
     const fake = await renderApp([
@@ -387,5 +538,95 @@ describe('App tab switching', () => {
     expect(screen.getByRole('heading', { name: 'Monitor' })).toBeVisible()
     expect(document.querySelector('.sidebar')).not.toHaveClass('is-collapsed')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  })
+})
+
+describe('App host query flows', () => {
+  it('closes a successful edit even when refresh fails, retaining the confirmed host and a local retry', async () => {
+    const fake = await renderApp([makeHost()])
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    await user.click(screen.getByText('My server', { selector: '.host-item-name' }))
+    const name = screen.getByLabelText('Name')
+    await user.clear(name)
+    await user.type(name, 'Renamed')
+    fake.mocks.hosts.update.mockResolvedValue(makeHost({ name: 'Renamed' }))
+    fake.mocks.hosts.list.mockRejectedValue(backendError('CONFIG_READ_FAILED', 'refresh denied'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByLabelText('Name')).not.toBeInTheDocument())
+    expect(await screen.findByText('Renamed', { selector: '.host-item-name' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Successful operations do not need to be repeated'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('refresh denied')
+    expect(fake.mocks.hosts.update).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/NODESHELL_ERR/)).not.toBeInTheDocument()
+    fake.mocks.hosts.list.mockResolvedValue([makeHost({ name: 'Renamed' })])
+    await user.click(screen.getByRole('button', { name: 'Retry loading hosts' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(fake.mocks.hosts.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses a fresh metadata read before asking to save credentials', async () => {
+    const fake = await renderApp([makeHost({ credentialsPrompted: false })])
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    fake.mocks.hosts.list.mockResolvedValue([makeHost({ credentialsPrompted: true })])
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 'fresh-session' })
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    await screen.findByRole('tab', { name: 'My server' })
+    await waitFor(() => expect(fake.mocks.hosts.list).toHaveBeenCalledTimes(3))
+    expect(screen.queryByRole('heading', { name: 'Save credentials' })).not.toBeInTheDocument()
+    expect(fake.mocks.credentials.save).not.toHaveBeenCalled()
+  })
+
+  it('does not recast a connected session as failed when credential metadata cannot be read', async () => {
+    const fake = await renderApp([makeHost({ credentialsPrompted: false })])
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    fake.mocks.hosts.list.mockRejectedValue(
+      backendError('CONFIG_READ_FAILED', 'metadata unavailable')
+    )
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 'connected-session' })
+    await user.click(within(hostRow('My server')).getByRole('button', { name: 'Connect' }))
+    expect(await screen.findByRole('tab', { name: 'My server' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await waitFor(() => expect(fake.mocks.hosts.list).toHaveBeenCalledTimes(3))
+    expect(screen.queryByRole('heading', { name: 'Save credentials' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await openHostsPicker(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent('metadata unavailable')
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('tab', { name: 'My server' })).toHaveAttribute('aria-selected', 'true')
+    expect(fake.mocks.sessions.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('refreshes saved credential flags without storing the password in a host payload', async () => {
+    const fake = await renderApp([makeHost()])
+    const user = userEvent.setup()
+    await openHostsPicker(user)
+    await user.click(screen.getByText('My server', { selector: '.host-item-name' }))
+    await user.type(screen.getByLabelText('Password'), 'ephemeral secret')
+    fake.mocks.hosts.update.mockResolvedValue(makeHost())
+    fake.mocks.credentials.isAvailable.mockResolvedValue(true)
+    fake.mocks.credentials.save.mockImplementation(async () => {
+      fake.mocks.hosts.list.mockResolvedValue([makeHost({ credentialsSaved: true })])
+    })
+    const before = fake.mocks.hosts.list.mock.calls.length
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByLabelText('Name')).not.toBeInTheDocument())
+    expect(fake.mocks.credentials.save).toHaveBeenCalledWith('h1', { password: 'ephemeral secret' })
+    expect(fake.mocks.hosts.update).toHaveBeenCalledWith('h1', {
+      name: 'My server',
+      host: 'example.com',
+      port: 22,
+      username: 'azure',
+      authMethod: 'password'
+    })
+    expect(fake.mocks.hosts.list.mock.calls.length).toBe(before + 2)
+    expect(JSON.stringify(fake.mocks.hosts.update.mock.calls)).not.toContain('ephemeral secret')
   })
 })

@@ -5,6 +5,9 @@
 ## 设计文档
 
 - [Wails 重构设计](design/wails-rebuild.md)
+- [前端工程改造计划](design/frontend-engineering-plan.md)：五项问题的方案与 P0—P8 实施记录；P8 本机代码和自动门禁已完成，原生交互、其他平台与性能门槛仍待验收。
+- [前端结构与维护约定](design/frontend-structure.md)：P7 后的功能入口、状态所有权、依赖方向和样式边界。
+- [P8 本机验收记录](reports/ui/frontend-p8-acceptance.md)：竞态修复、420 项测试、本机打包、同工具链体积对比及待完成门禁。
 
 ## 历史报告
 

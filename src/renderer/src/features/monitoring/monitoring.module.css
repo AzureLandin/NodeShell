@@ -1,0 +1,286 @@
+.monitor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.monitor-body-idle {
+  opacity: 0.72;
+}
+
+.monitor-host {
+  margin: 0;
+  font-size: 12px;
+  color: var(--monitor-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-host-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  background: var(--bg-elevated);
+  color: var(--monitor-text);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.monitor-host-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-metric {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitor-metric-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--monitor-text-muted);
+}
+
+.monitor-bar {
+  position: relative;
+  height: 18px;
+  border-radius: var(--radius-control);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  overflow: hidden;
+}
+
+.monitor-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  transition: width 0.35s ease;
+}
+
+.monitor-bar-cpu .monitor-bar-fill {
+  background: var(--metric-cpu);
+}
+
+.monitor-bar-mem .monitor-bar-fill {
+  background: var(--metric-mem);
+}
+
+.monitor-bar-swap .monitor-bar-fill {
+  background: var(--metric-swap);
+}
+
+.monitor-bar-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--monitor-bar-text);
+  text-shadow: var(--monitor-bar-text-shadow);
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-bar-text span {
+  color: inherit;
+  text-shadow: inherit;
+}
+
+.monitor-proc {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.monitor-proc-head,
+.monitor-proc-row {
+  display: grid;
+  grid-template-columns: 56px 44px minmax(0, 1fr);
+  gap: 0;
+  font-size: 11px;
+}
+
+.monitor-proc-head {
+  background: var(--accent-primary-dark);
+  color: var(--text-on-accent);
+  font-weight: 700;
+}
+
+.monitor-proc-head span,
+.monitor-proc-row span {
+  padding: 4px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid var(--border-on-accent);
+}
+
+.monitor-proc-head span {
+  color: #f0f2f5;
+  border-right-color: var(--border-on-accent);
+}
+
+.monitor-proc-row span {
+  border-right-color: var(--border-subtle);
+}
+
+.monitor-proc-head span:last-child,
+.monitor-proc-row span:last-child {
+  border-right: none;
+}
+
+.monitor-proc-head .monitor-proc-cpu {
+  background: var(--metric-cpu-header);
+  text-align: center;
+  color: #f0f2f5;
+}
+
+.monitor-proc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.monitor-proc-row {
+  color: var(--monitor-text);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.monitor-proc-row:nth-child(even) {
+  background: var(--bg-elevated);
+}
+
+.monitor-proc-row .monitor-proc-cpu {
+  text-align: center;
+  color: var(--monitor-text);
+  font-weight: 500;
+}
+
+.monitor-proc-cmd {
+  color: var(--monitor-text);
+}
+
+.monitor-proc-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--monitor-text-muted);
+}
+
+.monitor-load {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--monitor-text);
+}
+
+.monitor-load span:last-child {
+  color: var(--monitor-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.net-probe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+}
+
+.net-probe-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.net-probe-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--monitor-text);
+}
+
+.net-probe-arrow {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.net-probe-up .net-probe-arrow {
+  color: var(--status-upload);
+}
+
+.net-probe-down .net-probe-arrow {
+  color: var(--status-success);
+}
+
+.net-probe-chart {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.net-probe-ylabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--monitor-text-muted);
+  text-align: right;
+  padding: 1px 0;
+}
+
+.net-probe-svg {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+}
+
+.net-probe-grid {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.net-probe-line {
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.net-probe-line-up {
+  stroke: var(--status-upload);
+}
+
+.net-probe-line-down {
+  stroke: var(--status-success);
+}
+
+.monitor-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-error);
+  line-height: 1.4;
+}

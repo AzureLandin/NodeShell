@@ -7,7 +7,23 @@ release
 .DS_Store
 .eslintcache
 *.log*
-tsconfig.node.tsbuildinfo
+*.tsbuildinfo
+
+# Generated test results and coverage
+/coverage/
+/test-results/
+/coverage.out
+/coverage.txt
+/*.coverprofile
+
+# Go test binaries and local profiling output
+*.test
+*.test.exe
+/*.prof
+/*.pprof
+
+# Personal one-off scripts; shared CI/build scripts stay tracked
+/scripts/local/
 
 .vscode/
 
@@ -20,6 +36,8 @@ docs/superpowers/
 # Wails build artifacts
 /build/bin/
 /build/windows/
+# Default macOS template emitted by Wails; custom packaging templates must be tracked explicitly.
+/build/darwin/Info.plist
 /wailsjs/
 /package.json.md5
 /nodeshell

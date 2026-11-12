@@ -171,13 +171,25 @@ export function createApi(bridge: ApiBridge): ElectronApi {
     },
     transfer: {
       getTasks: (): Promise<TransferTask[]> => bridge.call<TransferTask[]>('TransferGetTasks'),
-      enqueueUpload: (sessionId: string, remoteDir: string, localPaths: string[]): Promise<string[]> =>
+      enqueueUpload: (
+        sessionId: string,
+        remoteDir: string,
+        localPaths: string[]
+      ): Promise<string[]> =>
         bridge.call<string[]>('TransferEnqueueUpload', sessionId, remoteDir, localPaths),
-      enqueueDownload: (sessionId: string, remotePath: string, localPath: string): Promise<string> =>
+      enqueueDownload: (
+        sessionId: string,
+        remotePath: string,
+        localPath: string
+      ): Promise<string> =>
         bridge.call<string>('TransferEnqueueDownload', sessionId, remotePath, localPath),
       chooseUploadFiles: (sessionId: string, remoteDir: string): Promise<string[]> =>
         bridge.call<string[]>('TransferChooseUploadFiles', sessionId, remoteDir),
-      chooseDownloadTarget: (sessionId: string, remotePath: string, defaultName: string): Promise<string> =>
+      chooseDownloadTarget: (
+        sessionId: string,
+        remotePath: string,
+        defaultName: string
+      ): Promise<string> =>
         bridge.call<string>('TransferChooseDownloadTarget', sessionId, remotePath, defaultName),
       cancel: (taskId: string): Promise<void> => bridge.call<void>('TransferCancel', taskId),
       retry: (taskId: string): Promise<string> => bridge.call<string>('TransferRetry', taskId),
@@ -231,7 +243,8 @@ export function createApi(bridge: ApiBridge): ElectronApi {
         text: string,
         providerId: string,
         model: string
-      ): Promise<void> => bridge.call<void>('AgentPrompt', sessionId, title, text, providerId, model),
+      ): Promise<void> =>
+        bridge.call<void>('AgentPrompt', sessionId, title, text, providerId, model),
       abort: (sessionId: string): Promise<void> => bridge.call<void>('AgentAbort', sessionId),
       clear: (sessionId: string): Promise<void> => bridge.call<void>('AgentClear', sessionId),
       onDelta: (cb: (event: AgentDeltaEvent) => void): (() => void) =>

@@ -18,6 +18,9 @@
     "auth": "认证方式",
     "password": "密码",
     "passwordLeaveBlank": "留空表示不修改",
+    "nameRequired": "请输入名称",
+    "hostRequired": "请输入主机地址",
+    "usernameRequired": "请输入用户名",
     "passwordRequired": "请输入密码",
     "showPassword": "显示",
     "hidePassword": "隐藏",
@@ -34,6 +37,7 @@
     "saving": "保存中…"
   },
   "session": {
+    "tabsLabel": "会话",
     "close": "关闭",
     "disconnected": "会话已断开",
     "error": "连接错误",
@@ -283,6 +287,12 @@
     "portLabel": "{{bind}} 上的端口 {{port}}"
   },
   "hostsPicker": {
+    "refresh": "刷新主机",
+    "retry": "重新加载主机",
+    "loading": "正在加载主机…",
+    "loadFailed": "加载主机失败",
+    "refreshFailed": "主机列表刷新失败，当前显示上次确认的数据；已成功的操作无需重复执行。",
+    "deleteFailed": "删除主机失败",
     "open": "主机",
     "title": "主机管理",
     "subtitle": "管理已保存的远程主机与连接配置",

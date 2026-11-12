@@ -1,8 +1,23 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ModalShell } from '../../src/renderer/src/components/ModalShell'
+import { ModalShell, useModalClose } from '../../src/renderer/src/ui/ModalShell'
+
+function CloseTwiceButton(): React.JSX.Element {
+  const requestClose = useModalClose()
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        requestClose()
+        requestClose()
+      }}
+    >
+      Request close twice
+    </button>
+  )
+}
 
 function overlayOf(dialog: HTMLElement): HTMLElement {
   const overlay = dialog.closest('.modal-overlay')
@@ -65,8 +80,9 @@ describe('ModalShell motion isolation', () => {
     expect(overlay).not.toHaveClass('modal-overlay--simple')
   })
 
-  it('marks the sheet as an open modal once mounted', () => {
+  it('opens without a staged enter transition when reduced motion is preferred', () => {
     const onClose = vi.fn()
+    const matchMedia = vi.spyOn(window, 'matchMedia')
     render(
       <ModalShell onClose={onClose} labelledBy="shell-title">
         <h3 id="shell-title">Shell title</h3>
@@ -77,7 +93,51 @@ describe('ModalShell motion isolation', () => {
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAttribute('aria-labelledby', 'shell-title')
     expect(dialog).toHaveClass('is-open')
+    expect(dialog).not.toHaveAttribute('data-starting-style')
     expect(overlayOf(dialog)).toHaveClass('is-open')
+    expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)')
+    matchMedia.mockRestore()
+  })
+
+  it('notifies the owner once after Base UI completes the exit animation', async () => {
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    let finishExit: (() => void) | undefined
+    const exitFinished = new Promise<void>((resolve) => {
+      finishExit = resolve
+    })
+    const exitAnimation = {
+      effect: { getTiming: () => ({ duration: 120, iterations: 1 }) },
+      finished: exitFinished,
+      pending: true,
+      playState: 'running'
+    } as unknown as Animation
+
+    render(
+      <ModalShell onClose={onClose}>
+        <CloseTwiceButton />
+      </ModalShell>
+    )
+
+    const dialog = screen.getByRole('dialog')
+    Object.defineProperty(dialog, 'getAnimations', {
+      configurable: true,
+      value: () => [exitAnimation]
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Request close twice' }))
+
+    expect(dialog).toHaveClass('is-closing')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await act(async () => {
+      finishExit?.()
+      await exitFinished
+    })
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('closes on Escape key press in simple motion mode', async () => {
@@ -103,6 +163,29 @@ describe('ModalShell motion isolation', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('allows a nested Escape handler to receive Escape when shell dismissal is disabled', () => {
+    const onClose = vi.fn()
+    const windowEscape = vi.fn()
+    const onWindowKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') windowEscape()
+    }
+    window.addEventListener('keydown', onWindowKeyDown)
+    const { unmount } = render(
+      <ModalShell onClose={onClose} closeOnEscape={false}>
+        <div>Nested form</div>
+      </ModalShell>
+    )
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    expect(windowEscape).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    unmount()
+    window.removeEventListener('keydown', onWindowKeyDown)
   })
 
   it('closes on overlay backdrop click in simple motion mode', async () => {

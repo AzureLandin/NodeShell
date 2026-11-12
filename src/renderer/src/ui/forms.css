@@ -1,13 +1,18 @@
 /*
  * Scoped styles for the Base UI form primitives.
  *
- * App.css still owns the shared look (colors, radii, `.form-field`,
- * `.app-select-*`, `.mcp-format-tab`, ...). Everything in this file only
- * covers the state attributes Base UI emits that the Radix-era selectors in
- * App.css cannot express, plus the few Base UI specific layout variables.
+ * surfaces.css owns shared fields and select surfaces; business rules live
+ * in their feature CSS Modules. This file covers Base UI state attributes
+ * and layout variables that the shared surface selectors cannot express.
  * Keep the selectors scoped to data attributes so they never leak into
  * unrelated markup.
  */
+
+.form-field-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 
 /* ---------------------------------------------------------------------------
  * Select (Base UI)

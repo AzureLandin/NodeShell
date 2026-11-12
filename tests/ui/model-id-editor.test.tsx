@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { renderWithI18n } from './helpers'
-import { ModelIdEditor } from '../../src/renderer/src/components/ModelIdEditor'
+import { renderWithI18n } from '../support/helpers'
+import { ModelIdEditor } from '../../src/renderer/src/features/settings/ModelIdEditor'
 
 function ControlledEditor({
   initial = [],
@@ -91,7 +91,9 @@ describe('ModelIdEditor', () => {
 
   it('removes model when clicking chip remove button', async () => {
     const onChangeSpy = vi.fn()
-    renderWithI18n(<ControlledEditor initial={['gpt-4o-mini', 'deepseek-chat']} onChangeSpy={onChangeSpy} />)
+    renderWithI18n(
+      <ControlledEditor initial={['gpt-4o-mini', 'deepseek-chat']} onChangeSpy={onChangeSpy} />
+    )
     const user = userEvent.setup()
 
     const removeBtn = screen.getByRole('button', { name: 'Remove model gpt-4o-mini' })

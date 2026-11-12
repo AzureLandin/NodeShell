@@ -2,8 +2,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SftpPanel } from '../../src/renderer/src/components/SftpPanel'
-import { emitTransferEvent, installFakeApi, renderWithI18n } from './helpers'
+import { SftpPanel } from '../../src/renderer/src/features/sftp/SftpPanel'
+import { emitTransferEvent, installFakeApi, renderWithI18n } from '../support/helpers'
 
 /**
  * SFTP surface (T1.8.3 / S2.1): Wails native file drops upload exactly once
@@ -93,7 +93,7 @@ describe('SftpPanel listing', () => {
 
     fireEvent.doubleClick(screen.getByText('docs'))
 
-    await waitFor(() => expect(fake.mocks.sftp.chdir).toHaveBeenCalledWith('s1', 'docs'))
+    await waitFor(() => expect(fake.mocks.sftp.chdir).toHaveBeenCalledWith('s1', '/home/user/docs'))
     expect(await screen.findByText('report.txt')).toBeInTheDocument()
     expect(screen.getByLabelText('Directory')).toHaveValue('/home/user/docs')
   })
@@ -182,7 +182,9 @@ describe('SftpPanel file drops (Wails native path)', () => {
       nativeDrop(['C:\\local\\a.txt'])
     })
     await waitFor(() =>
-      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', ['C:\\local\\a.txt'])
+      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', [
+        'C:\\local\\a.txt'
+      ])
     )
     expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledTimes(1)
 
@@ -228,7 +230,9 @@ describe('SftpPanel file drops (Wails native path)', () => {
     })
 
     await waitFor(() =>
-      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', ['C:\\local\\f.txt'])
+      expect(fake.mocks.transfer.enqueueUpload).toHaveBeenCalledWith('s1', '/home/user', [
+        'C:\\local\\f.txt'
+      ])
     )
   })
 
@@ -375,7 +379,11 @@ describe('SftpPanel context menu', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Download' }))
     await waitFor(() =>
-      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith('s1', '/home/user/readme.md', 'readme.md')
+      expect(fake.mocks.transfer.chooseDownloadTarget).toHaveBeenCalledWith(
+        's1',
+        '/home/user/readme.md',
+        'readme.md'
+      )
     )
   })
 
@@ -389,7 +397,7 @@ describe('SftpPanel context menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
   })
 
-  it('closes on an outside mousedown', async () => {
+  it('closes on an outside click without stealing the clicked control focus', async () => {
     await renderExpandedPanel()
 
     fireEvent.contextMenu(row('readme.md'))
@@ -397,7 +405,53 @@ describe('SftpPanel context menu', () => {
     expect(document.body.querySelector('[data-testid="sftp-context-menu"]')).not.toBeNull()
     expect(document.querySelector('.sftp-panel [data-testid="sftp-context-menu"]')).toBeNull()
 
-    fireEvent.mouseDown(document.body)
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    const path = screen.getByLabelText('Directory')
+    await userEvent.click(path)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    expect(path).toHaveFocus()
+  })
+
+  it('returns focus to the file row after Escape', async () => {
+    await renderExpandedPanel()
+    const entry = row('readme.md')
+    fireEvent.contextMenu(entry)
+    await screen.findByRole('menu')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    await waitFor(() => expect(entry.querySelector('button')).toHaveFocus())
+  })
+
+  it('uses the latest right-clicked entry when selecting an action', async () => {
+    const { fake } = await renderExpandedPanel()
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('renamed')
+    fireEvent.contextMenu(row('readme.md'))
+    fireEvent.contextMenu(row('docs'))
+    expect(screen.getAllByRole('menu')).toHaveLength(1)
+    expect(screen.queryByRole('menuitem', { name: 'Download' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    await waitFor(() =>
+      expect(fake.mocks.sftp.rename).toHaveBeenCalledWith(
+        's1',
+        '/home/user/docs',
+        '/home/user/renamed'
+      )
+    )
+    prompt.mockRestore()
+  })
+
+  it('closes stale menus on session changes, collapse and disconnect', async () => {
+    const { rerender } = await renderExpandedPanel()
+    fireEvent.contextMenu(row('readme.md'))
+    rerender(<SftpPanel sessionId="s2" connected expanded onToggle={vi.fn()} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    await screen.findByText('readme.md')
+    fireEvent.contextMenu(row('readme.md'))
+    rerender(<SftpPanel sessionId="s2" connected expanded={false} onToggle={vi.fn()} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    rerender(<SftpPanel sessionId="s2" connected expanded onToggle={vi.fn()} />)
+    await screen.findByText('readme.md')
+    fireEvent.contextMenu(row('readme.md'))
+    rerender(<SftpPanel sessionId="s2" connected={false} expanded onToggle={vi.fn()} />)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
   })
 })

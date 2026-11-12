@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, waitFor } from '@testing-library/react'
-import { TerminalView } from '../../src/renderer/src/components/TerminalView'
-import { MAX_WRITE_CHARS_PER_FRAME } from '../../src/renderer/src/terminal-output'
-import { burstPayloads } from './terminal-stress'
-import { installFakeApi, type FakeApi } from './helpers'
+import { TerminalView } from '../../src/renderer/src/features/sessions/TerminalView'
+import { MAX_WRITE_CHARS_PER_FRAME } from '../../src/renderer/src/features/sessions/terminal-output'
+import { burstPayloads } from '../support/terminal-payloads'
+import { installFakeApi, type FakeApi } from '../support/helpers'
 import type { ResolvedTheme } from '../../src/shared/types'
 
 interface MockTermInstance {
@@ -42,6 +42,7 @@ vi.mock('@xterm/xterm', () => {
     write = vi.fn()
     dispose = vi.fn()
     onData = vi.fn(() => ({ dispose: vi.fn() }))
+    attachCustomKeyEventHandler = vi.fn()
     clear = vi.fn()
     clearSelection = vi.fn()
     getSelection = vi.fn(() => '')

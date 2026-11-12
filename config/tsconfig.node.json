@@ -1,0 +1,22 @@
+{
+  "include": ["vite.config.ts", "vitest.config.ts", "../src/shared/**/*"],
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "..",
+    "types": ["node"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitAny": false,
+    "noImplicitReturns": true
+  }
+}

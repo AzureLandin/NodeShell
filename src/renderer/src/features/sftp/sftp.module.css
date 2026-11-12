@@ -1,0 +1,538 @@
+/* SFTP bottom panel */
+
+.sftp-panel:global(.glass) {
+  border: none;
+  border-top: 1px solid var(--glass-border);
+  box-shadow: none;
+}
+
+.sftp-panel {
+  --sftp-body-height: min(38vh, 340px);
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  /* Do NOT set overflow:hidden here. In Chromium/Wails, overflow:hidden on this
+     wrapper + a transform transition on the chevron makes the title text fail to
+     paint for the duration of the expand/collapse animation. Clipping belongs on
+     .sftp-panel-collapse only. */
+  background: transparent;
+}
+
+.sftp-panel-collapse {
+  flex: 0 0 auto;
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  transition: height var(--dur-med) var(--ease-spring);
+}
+
+.sftp-panel-expanded .sftp-panel-collapse {
+  height: var(--sftp-body-height);
+}
+
+.sftp-panel-collapse-inner {
+  height: var(--sftp-body-height);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sftp-panel-collapse {
+    transition: none;
+  }
+}
+
+button.sftp-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--app-bottom-bar-height);
+  min-height: var(--app-bottom-bar-height);
+  flex: 0 0 auto;
+  padding: 0 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-top: 1px solid var(--glass-border);
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+  box-sizing: border-box;
+  /* Own stacking context so the body height animation cannot blank the label. */
+  position: relative;
+  z-index: 1;
+}
+
+button.sftp-panel-toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+button.sftp-panel-toggle:focus,
+button.sftp-panel-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+  border-top: 1px solid var(--glass-border);
+}
+
+.sftp-panel-expanded button.sftp-panel-toggle {
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.sftp-panel-expanded button.sftp-panel-toggle:focus,
+.sftp-panel-expanded button.sftp-panel-toggle:focus-visible {
+  border-bottom: 1px solid var(--border-default);
+}
+
+.sftp-panel-chevron {
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.sftp-panel-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.sftp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 2px rgba(61, 154, 80, 0.2);
+  flex-shrink: 0;
+}
+
+.sftp-transfer-badge {
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-warm);
+  background: var(--border-warn);
+  border: 1px solid var(--border-warn);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.sftp-panel-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 10px 8px;
+  overflow: hidden;
+  background: transparent;
+  box-sizing: border-box;
+  /* Wails file-drop target: native drops over the panel resolve to absolute
+     paths (inherited by every child, so the whole panel body is a target). */
+  --wails-drop-target: drop;
+}
+
+.sftp-panel-body-dragover {
+  outline: 1px dashed var(--accent-info);
+  outline-offset: -6px;
+}
+
+.sftp-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(20, 30, 45, 0.72);
+}
+
+.sftp-drop-overlay p {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--text-on-accent);
+  background: rgba(30, 50, 80, 0.9);
+  border: 1px solid var(--accent-info);
+  border-radius: 4px;
+}
+
+.sftp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.sftp-path-bar {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.sftp-path-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 5px 8px;
+  color: var(--text-primary);
+  font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--bg-app);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+}
+
+.sftp-path-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.sftp-transfer {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--bg-terminal);
+  border: 1px solid var(--bg-hover-strong);
+  border-radius: 4px;
+}
+
+.sftp-transfer-done {
+  border-color: var(--status-success);
+}
+
+.sftp-transfer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.sftp-transfer-label {
+  flex-shrink: 0;
+  color: var(--text-warm);
+  font-weight: 700;
+}
+
+.sftp-transfer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.sftp-transfer-pct {
+  flex-shrink: 0;
+  color: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.sftp-transfer-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-default);
+  overflow: hidden;
+}
+
+.sftp-transfer-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-info);
+  transition: width 0.12s linear;
+}
+
+.sftp-transfer-done .sftp-transfer-fill {
+  background: var(--status-success);
+}
+
+.sftp-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sftp-browser {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  background: var(--border-default);
+  overflow: hidden;
+}
+
+.sftp-list-header,
+.sftp-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 148px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.sftp-list-header {
+  flex-shrink: 0;
+  height: 28px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--bg-hover-strong);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sftp-col-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sftp-name);
+  font-weight: 700;
+}
+
+.sftp-col-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--sftp-name);
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.sftp-col-mtime {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--sftp-name);
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.sftp-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  background: var(--border-default);
+}
+
+.sftp-list-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.sftp-item {
+  margin: 0 4px;
+  padding: 0 4px 0 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  min-height: 32px;
+}
+
+.sftp-item:nth-child(even) {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sftp-item:hover {
+  background: var(--bg-hover-strong);
+}
+
+.sftp-item-selected {
+  background: var(--accent-primary) !important;
+  outline: 1px solid var(--accent-primary);
+}
+
+.sftp-item-main {
+  display: contents;
+  cursor: default;
+}
+
+button.sftp-item-main {
+  all: unset;
+  display: contents;
+  cursor: default;
+}
+
+.sftp-item-icon {
+  display: inline-block;
+  width: 1em;
+  margin-right: 8px;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.sftp-item-icon-dir {
+  color: var(--icon-folder-start);
+}
+
+.sftp-item-icon-file {
+  color: var(--text-secondary);
+}
+
+.sftp-item-selected .sftp-item-icon-dir {
+  color: var(--text-warm);
+}
+
+.sftp-item-selected .sftp-item-icon-file {
+  color: var(--text-on-accent);
+}
+
+.sftp-item-dir .sftp-col-name {
+  color: var(--sftp-name-dir);
+  font-weight: 700;
+}
+
+.sftp-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  min-height: 100px;
+  padding: 16px;
+}
+
+.sftp-placeholder-inline {
+  min-height: 80px;
+}
+
+.sftp-placeholder-icon {
+  font-size: 32px;
+  color: var(--icon-folder-start);
+  opacity: 0.75;
+}
+
+.sftp-empty,
+.sftp-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+  text-align: center;
+}
+
+.sftp-error {
+  color: var(--text-error);
+  text-align: left;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  background: rgba(192, 64, 64, 0.12);
+  border: 1px solid rgba(192, 64, 64, 0.25);
+  border-radius: 4px;
+}
+
+@media (max-width: 900px) {
+  .sftp-list-header,
+  .sftp-item {
+    grid-template-columns: minmax(0, 1fr) 72px;
+  }
+
+  .sftp-col-mtime {
+    display: none;
+  }
+
+  .sftp-list-header .sftp-col-mtime {
+    display: none;
+  }
+}
+
+:global(.modal).sftp-editor-modal {
+  width: min(900px, calc(100vw - 32px));
+  height: min(80vh, 720px);
+  max-height: min(90vh, 800px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  overflow: hidden;
+}
+
+.sftp-editor-header {
+  flex-shrink: 0;
+  align-items: flex-start;
+}
+
+.sftp-editor-title-block {
+  min-width: 0;
+  flex: 1;
+}
+
+.sftp-editor-title-block :global(.modal-title) {
+  margin-bottom: 4px;
+}
+
+.sftp-editor-path {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-editor-error {
+  flex-shrink: 0;
+  margin: 0 0 8px;
+}
+
+.sftp-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+.sftp-code-editor {
+  flex: 1;
+  min-height: 280px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+.sftp-code-editor :global(.cm-editor) {
+  height: 100%;
+}
+
+.sftp-code-editor :global(.cm-editor):global(.cm-focused) {
+  outline: none;
+}
+
+.sftp-code-editor:focus-within {
+  border-color: var(--accent-primary);
+}
+
+.sftp-editor-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+}

@@ -1,0 +1,78 @@
+.permission-modal-overlay {
+  z-index: 1300;
+}
+
+.permission-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.permission-modal-source {
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.permission-modal-action {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.permission-modal-summary {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  max-height: 8em;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: var(--bg-input, var(--bg-overlay));
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+}
+
+.permission-modal-detail {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.permission-modal-actions {
+  justify-content: flex-end;
+}
+
+.agent-permission {
+  flex-shrink: 0;
+  margin: 0 12px 10px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+}
+
+.agent-permission :global(.modal-title) {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.agent-permission .permission-modal-meta {
+  margin: 0 0 8px;
+}
+
+.agent-permission .permission-modal-summary {
+  max-height: 6em;
+}
+
+.agent-permission :global(.form-actions) {
+  margin-top: 10px;
+  gap: 6px;
+}

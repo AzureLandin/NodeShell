@@ -255,6 +255,8 @@ go run . --mcp
 npm test
 ```
 
+测试目录划分、辅助代码约定和按目录运行的命令见 [测试指南](tests/README.md)。
+
 运行 Go 测试：
 
 ```bash
@@ -309,12 +311,19 @@ CI 会在 Windows、macOS 和 Linux 原生 runner 上执行类型检查、前端
 │   ├── shared/                  # 前后端共享类型和错误定义
 │   └── ...
 ├── scripts/                     # MCP smoke test 和平台打包脚本
-├── tests/                       # 前端和适配层测试
+├── config/                      # Vite、Vitest 和 TypeScript 详细配置
+├── tests/
+│   ├── unit/                    # 逻辑与 API 适配层单元测试
+│   ├── ui/                      # 组件与交互测试
+│   ├── contracts/               # CI 结构与运行时依赖约束测试
+│   └── support/                 # 公共 setup、fake API 和测试数据
 ├── docs/
 │   ├── design/                  # 重构设计文档
 │   └── reports/                 # 历史实施与验收报告（按功能域分类）
 └── wails.json                   # Wails 构建配置
 ```
+
+Go 测试与被测包放在同一目录；入口包的测试保留在仓库根目录。根目录的 `tsconfig.json` 为编辑器保留项目引用入口，详细配置由 `config/` 维护。
 
 ## 数据与配置
 

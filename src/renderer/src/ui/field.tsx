@@ -9,6 +9,9 @@ export interface FormFieldProps extends Omit<Field.Root.Props, 'children'> {
   children: ReactNode
   /** Wrapper class. Defaults to the shared `form-field` class from App.css. */
   className?: string
+  /** Optional help and externally managed validation, associated with the control by Base UI. */
+  description?: ReactNode
+  error?: ReactNode
 }
 
 /**
@@ -23,14 +26,25 @@ export function FormField({
   label,
   children,
   className,
+  description,
+  error,
+  invalid,
   ...rootProps
 }: FormFieldProps): React.JSX.Element {
   return (
-    <Field.Root className={className ?? 'form-field'} {...rootProps}>
+    <Field.Root
+      className={className ?? 'form-field'}
+      invalid={invalid ?? (error ? true : undefined)}
+      {...rootProps}
+    >
       <Field.Label className="form-field-label" nativeLabel={false} render={<span />}>
         {label}
       </Field.Label>
       {children}
+      {description && (
+        <Field.Description className="form-field-description">{description}</Field.Description>
+      )}
+      {error && <FormFieldError match>{error}</FormFieldError>}
     </Field.Root>
   )
 }

@@ -2,9 +2,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SidebarPanel } from '../../src/renderer/src/components/SidebarPanel'
-import { TunnelPanel } from '../../src/renderer/src/components/TunnelPanel'
-import { installFakeApi, renderWithI18n } from './helpers'
+import { SidebarPanel } from '../../src/renderer/src/app/SidebarPanel'
+import { TunnelPanel } from '../../src/renderer/src/features/tunnels/TunnelPanel'
+import { installFakeApi, renderWithI18n } from '../support/helpers'
 
 describe('TunnelPanel', () => {
   it('asks for a session when disconnected', () => {
@@ -110,9 +110,7 @@ describe('SidebarPanel ports tab', () => {
   it('switches from monitor to the ports panel', async () => {
     const fake = installFakeApi()
     fake.mocks.tunnels.discover.mockResolvedValue([])
-    renderWithI18n(
-      <SidebarPanel activeSessionId="s1" activeSessionTitle="prod-web" connected />
-    )
+    renderWithI18n(<SidebarPanel activeSessionId="s1" activeSessionTitle="prod-web" connected />)
     expect(screen.getByRole('heading', { name: 'Monitor' })).toBeInTheDocument()
 
     const user = userEvent.setup()
@@ -128,12 +126,8 @@ describe('SidebarPanel ports tab', () => {
   it('keeps the monitor poller running while the ports tab is showing', async () => {
     const fake = installFakeApi()
     fake.mocks.tunnels.discover.mockResolvedValue([])
-    renderWithI18n(
-      <SidebarPanel activeSessionId="s1" activeSessionTitle="prod-web" connected />
-    )
-    await waitFor(() =>
-      expect(fake.mocks.monitor.setActive).toHaveBeenCalledWith('s1', 'prod-web')
-    )
+    renderWithI18n(<SidebarPanel activeSessionId="s1" activeSessionTitle="prod-web" connected />)
+    await waitFor(() => expect(fake.mocks.monitor.setActive).toHaveBeenCalledWith('s1', 'prod-web'))
     const calls = fake.mocks.monitor.setActive.mock.calls.length
 
     const user = userEvent.setup()

@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
-import { SettingsModal } from '../../src/renderer/src/components/SettingsModal'
-import { installFakeApi, renderWithI18n } from './helpers'
+import { SettingsModal } from '../../src/renderer/src/features/settings/SettingsModal'
+import { installFakeApi, renderWithI18n } from '../support/helpers'
 import type { AppSettings, LanguageCode, ThemePreference } from '../../src/shared/types'
 
 /**
@@ -361,7 +361,11 @@ describe('SettingsModal agent providers', () => {
       defaultProviderId: 'p1',
       defaultModel: 'deepseek-chat'
     }
-    fake.mocks.agent.upsertProvider.mockResolvedValue({ ...saved, configured: false, providers: [{ ...saved.providers[0], hasKey: false }] })
+    fake.mocks.agent.upsertProvider.mockResolvedValue({
+      ...saved,
+      configured: false,
+      providers: [{ ...saved.providers[0], hasKey: false }]
+    })
     fake.mocks.agent.setProviderKey.mockResolvedValue(saved)
     renderWithI18n(<SettingsModal {...makeProps()} />)
     const user = userEvent.setup()
@@ -391,9 +395,14 @@ describe('SettingsModal agent providers', () => {
         models: ['deepseek-chat']
       })
     )
-    await waitFor(() => expect(fake.mocks.agent.setProviderKey).toHaveBeenCalledWith('p1', 'sk-secret'))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'DeepSeek' })).toHaveAttribute('aria-expanded', 'false')
+      expect(fake.mocks.agent.setProviderKey).toHaveBeenCalledWith('p1', 'sk-secret')
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'DeepSeek' })).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
     )
 
     await expandProvider(user, 'DeepSeek')
@@ -544,7 +553,10 @@ describe('SettingsModal agent providers', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add provider' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Add provider' }))
-    expect(screen.getByRole('button', { name: 'New provider' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'New provider' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.getByLabelText('Name 1')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Name 1'), 'Groq')

@@ -3,9 +3,9 @@ import { useState, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AgentPanel } from '../../src/renderer/src/components/AgentPanel'
+import { AgentPanel } from '../../src/renderer/src/features/agent/AgentPanel'
 import type { PermissionAskEvent } from '../../src/shared/types'
-import { emitAgentEvent, installFakeApi, renderWithI18n, type FakeApi } from './helpers'
+import { emitAgentEvent, installFakeApi, renderWithI18n, type FakeApi } from '../support/helpers'
 
 /**
  * Right-hand agent surface: prompts go to the active session, streamed deltas
@@ -307,7 +307,9 @@ describe('AgentPanel guards', () => {
 
     await user.click(await screen.findByLabelText('Model'))
     await user.click(await screen.findByRole('option', { name: 'gpt-4o' }))
-    await waitFor(() => expect(fake.mocks.agent.setDefaultModel).toHaveBeenCalledWith('p1', 'gpt-4o'))
+    await waitFor(() =>
+      expect(fake.mocks.agent.setDefaultModel).toHaveBeenCalledWith('p1', 'gpt-4o')
+    )
 
     await user.type(await composer(), 'use the bigger model')
     await user.click(screen.getByRole('button', { name: 'Send' }))

@@ -169,7 +169,8 @@ export interface SftpTransferProgressEvent {
 }
 
 export type TransferDirection = 'upload' | 'download'
-export type TransferState = 'queued' | 'running' | 'finalizing' | 'succeeded' | 'failed' | 'cancelled'
+export type TransferState =
+  'queued' | 'running' | 'finalizing' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface TransferTask {
   taskId: string
@@ -284,10 +285,7 @@ export interface ElectronApi {
     remove: (id: string) => Promise<void>
   }
   sessions: {
-    connect: (
-      hostId: string,
-      options?: ConnectOptions
-    ) => Promise<{ sessionId: string }>
+    connect: (hostId: string, options?: ConnectOptions) => Promise<{ sessionId: string }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>
     disconnect: (sessionId: string) => Promise<void>
@@ -302,10 +300,7 @@ export interface ElectronApi {
   }
   credentials: {
     isAvailable: () => Promise<boolean>
-    save: (
-      hostId: string,
-      payload: { password?: string; privateKeyPath?: string }
-    ) => Promise<void>
+    save: (hostId: string, payload: { password?: string; privateKeyPath?: string }) => Promise<void>
     clear: (hostId: string) => Promise<void>
     markPrompted: (hostId: string, saved: boolean) => Promise<void>
   }
@@ -330,11 +325,7 @@ export interface ElectronApi {
     /** Read a remote text file for the in-app editor (max 512KiB). */
     readText: (sessionId: string, remotePath: string) => Promise<{ path: string; content: string }>
     /** Write UTF-8 text to a remote file from the in-app editor (max 512KiB). */
-    writeText: (
-      sessionId: string,
-      remotePath: string,
-      content: string
-    ) => Promise<{ path: string }>
+    writeText: (sessionId: string, remotePath: string, content: string) => Promise<{ path: string }>
     onTransferProgress: (cb: (event: SftpTransferProgressEvent) => void) => () => void
   }
   transfer: {
@@ -342,7 +333,11 @@ export interface ElectronApi {
     enqueueUpload: (sessionId: string, remoteDir: string, localPaths: string[]) => Promise<string[]>
     enqueueDownload: (sessionId: string, remotePath: string, localPath: string) => Promise<string>
     chooseUploadFiles: (sessionId: string, remoteDir: string) => Promise<string[]>
-    chooseDownloadTarget: (sessionId: string, remotePath: string, defaultName: string) => Promise<string>
+    chooseDownloadTarget: (
+      sessionId: string,
+      remotePath: string,
+      defaultName: string
+    ) => Promise<string>
     cancel: (taskId: string) => Promise<void>
     retry: (taskId: string) => Promise<string>
     clear: (taskId: string) => Promise<void>
@@ -418,9 +413,7 @@ export interface ElectronApi {
   }
   mcpRegistration: {
     status: () => Promise<McpRegistrationTargetStatus[]>
-    register: (
-      target: McpRegistrationTarget | 'all'
-    ) => Promise<McpRegistrationResult[]>
+    register: (target: McpRegistrationTarget | 'all') => Promise<McpRegistrationResult[]>
     clipboardSnippet: () => Promise<string>
     manualConfig: () => Promise<McpManualConfig>
   }

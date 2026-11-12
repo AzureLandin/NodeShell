@@ -1,0 +1,696 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* Root stacking context: keeps portalled overlays (Base UI / Radix popups,
+   modals, menus) layered predictably above the app chrome. Portals render
+   into document.body, so they stay outside this context and above it. */
+
+#root {
+  isolation: isolate;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Unified thin dark scrollbars (SFTP, sidebar, lists, Radix Select, etc.) */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+  border: 2px solid var(--scrollbar-track);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  border: 2px solid var(--scrollbar-track);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.session-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-status-connecting {
+  background: var(--status-connecting);
+}
+
+.session-status-connected {
+  background: var(--status-success);
+}
+
+.session-status-disconnected {
+  background: var(--text-muted);
+}
+
+.session-status-error {
+  background: var(--status-error);
+}
+
+/* Password modal */
+
+/* Overlay is a solid dim layer — no backdrop blur (see the note above
+   `.glass`): blurring the whole viewport is the single most expensive paint
+   operation in the app. */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.confirm-modal-overlay {
+  z-index: 1200;
+}
+
+/* ModalShell staged open/close — legacy overlays keep solid dim above */
+
+.modal-overlay--animated {
+  background: rgba(0, 0, 0, 0);
+  transition: background-color var(--dur-med) var(--ease-spring);
+}
+
+.modal-overlay--animated.is-open {
+  background: var(--bg-overlay);
+}
+
+.modal-overlay--animated.is-closing {
+  background: rgba(0, 0, 0, 0);
+}
+
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sheet);
+  padding: 20px 22px 18px;
+  width: min(380px, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  box-sizing: border-box;
+  overflow-x: hidden;
+  box-shadow: var(--shadow-modal), var(--glass-highlight);
+}
+
+.modal.confirm-modal {
+  width: min(420px, calc(100vw - 40px));
+  padding: 22px 24px 20px;
+}
+
+.modal.confirm-modal {
+  width: min(460px, calc(100vw - 40px));
+}
+
+.modal.modal--animated {
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity var(--dur-med) var(--ease-spring),
+    transform var(--dur-med) var(--ease-spring);
+}
+
+.modal.modal--animated.is-open {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.modal.modal--animated.is-closing {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+.modal.modal-motion-simple {
+  opacity: 0;
+  transform: none;
+  transition: opacity 120ms ease-out;
+}
+
+.modal.modal-motion-simple.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+.modal.modal-motion-simple.is-closing {
+  opacity: 0;
+  transform: none;
+}
+
+.modal-overlay--simple {
+  transition: opacity 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay--animated,
+  .modal-overlay--animated.is-open,
+  .modal-overlay--animated.is-closing,
+  .modal-overlay--simple,
+  .modal.modal--animated,
+  .modal.modal--animated.is-open,
+  .modal.modal--animated.is-closing,
+  .modal.modal-motion-simple,
+  .modal.modal-motion-simple.is-open,
+  .modal.modal-motion-simple.is-closing {
+    transition: none;
+    transition-delay: 0ms;
+  }
+
+  .modal.modal--animated,
+  .modal.modal-motion-simple {
+    opacity: 1;
+    transform: none;
+  }
+
+  .modal-overlay--animated,
+  .modal-overlay--simple {
+    background: var(--bg-overlay);
+  }
+
+  .modal-overlay--animated.is-closing,
+  .modal-overlay--simple.is-closing {
+    background: rgba(0, 0, 0, 0);
+  }
+}
+
+.modal-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.modal-subtitle {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--text-subtle);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.confirm-modal-message {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.btn-settings {
+  width: 100%;
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 14px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-field > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  transition:
+    border-color var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy);
+}
+
+.form-field input:hover:not(:disabled),
+.form-field textarea:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.form-field input:focus,
+.form-field textarea:focus {
+  outline: none;
+  border-color: var(--text-muted);
+  background-color: var(--bg-input-focus);
+  box-shadow: 0 0 0 2px var(--accent-focus-ring);
+}
+
+.form-field input.input-invalid,
+.form-field input.input-invalid:focus {
+  border-color: var(--border-danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-error) 25%, transparent);
+}
+
+.form-inline-error {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-error);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Hide native number spinners (Windows chrome looks out of place on dark UI) */
+
+.form-field input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.form-field input[type='number']::-webkit-outer-spin-button,
+.form-field input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Radix Select — trigger + menu (fully styled, not native) */
+
+.app-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-button);
+  color: var(--text-bright);
+  text-align: left;
+  font-weight: 400;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy),
+    transform var(--dur-fast) var(--ease-snappy);
+}
+
+.app-select-trigger > span {
+  color: inherit;
+}
+
+.app-select-trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-input-focus);
+}
+
+.app-select-trigger:focus {
+  outline: none;
+  border-color: var(--text-muted);
+  background: var(--bg-input-focus);
+  box-shadow: 0 0 0 2px var(--accent-focus-ring);
+}
+
+.app-select-trigger[data-disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-select-trigger [data-placeholder] {
+  color: var(--text-muted);
+}
+
+.app-select-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%23999999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px 8px;
+  transition: transform 140ms ease;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+}
+
+.app-select-content {
+  z-index: 1300;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+}
+
+.app-select-viewport {
+  padding: 4px;
+}
+
+.app-select-group-label {
+  padding: 6px 10px 2px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app-select-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-panel);
+  border: none;
+  border-radius: 0;
+  color: var(--text-subtle);
+  font-size: 10px;
+  cursor: default;
+}
+
+.app-select-option {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 4px;
+  color: var(--text-title);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.app-select-option[data-highlighted] {
+  background: var(--bg-elevated);
+  color: var(--text-bright);
+}
+
+.app-select-option[data-disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.form-field-row {
+  display: flex;
+  gap: 6px;
+}
+
+.form-field-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-field-row .password-visibility-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-width: 3.5em;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.confirm-modal .form-field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.confirm-modal .form-field {
+  min-width: 0;
+}
+
+/* Buttons */
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--btn-secondary-border);
+  border-radius: var(--radius-button);
+  padding: 7px 14px;
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  font-weight: 700;
+  transition:
+    transform var(--dur-fast) var(--ease-snappy),
+    background-color var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy);
+}
+
+button:hover:not(:disabled) {
+  background: var(--btn-secondary-bg-hover);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-border);
+  color: var(--text-on-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
+  color: var(--text-on-accent);
+}
+
+.btn-secondary {
+  background: var(--btn-secondary-bg);
+  border-color: var(--btn-secondary-border);
+  color: var(--btn-secondary-text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--btn-secondary-bg-hover);
+}
+
+.btn-danger {
+  background: var(--btn-danger-bg);
+  border-color: var(--btn-danger-border);
+  color: var(--btn-danger-text);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--btn-danger-bg-hover);
+  color: var(--btn-danger-text);
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+
+  button:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* Toast */
+
+.error-boundary {
+  padding: 12px;
+  color: var(--text-error);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 10px 12px;
+  max-width: 360px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+}
+
+.toast-message {
+  flex: 1;
+  font-size: 13px;
+}
+
+.toast-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.toast-dismiss:hover {
+  color: var(--text-bright);
+  background: transparent;
+}
+
+.terminal-context-menu,
+.sftp-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-context-menu-item,
+.sftp-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: var(--radius-button);
+}
+
+.terminal-context-menu-item:hover:not(:disabled),
+.sftp-context-menu-item:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.terminal-context-menu-item:disabled,
+.sftp-context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.terminal-context-menu-separator,
+.sftp-context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-subtle);
+}
+
+.sftp-context-menu-item.is-danger {
+  color: var(--text-error);
+}
+
+.sftp-context-menu-item.is-danger:hover:not(:disabled) {
+  background: var(--status-error);
+  color: var(--text-on-accent);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.settings-modal-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.settings-modal-close:hover {
+  color: var(--text-bright);
+  background: transparent;
+}
+
+.settings-modal-header .modal-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}

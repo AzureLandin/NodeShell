@@ -3,9 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../src/renderer/src/App'
-import { PermissionModal } from '../../src/renderer/src/components/PermissionModal'
+import { PermissionModal } from '../../src/renderer/src/features/permissions/PermissionModal'
 import type { PermissionAskEvent } from '../../src/shared/types'
-import { emitPermissionAsk, emitPermissionClosed, installFakeApi, renderWithI18n } from './helpers'
+import {
+  emitPermissionAsk,
+  emitPermissionClosed,
+  installFakeApi,
+  renderWithI18n
+} from '../support/helpers'
 
 function ask(overrides: Partial<PermissionAskEvent> = {}): PermissionAskEvent {
   return {
@@ -54,9 +59,7 @@ describe('PermissionModal', () => {
   })
 
   it('renders the inline variant inside the caller without an overlay', () => {
-    renderWithI18n(
-      <PermissionModal variant="inline" request={ask()} onDecide={vi.fn()} />
-    )
+    renderWithI18n(<PermissionModal variant="inline" request={ask()} onDecide={vi.fn()} />)
     const dialog = screen.getByRole('dialog', { name: 'Permission required' })
     expect(dialog).toHaveClass('agent-permission')
     expect(dialog.querySelector('.permission-modal-overlay')).toBeNull()

@@ -2,14 +2,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TransferCenter } from '../../src/renderer/src/components/TransferCenter'
+import { TransferCenter } from '../../src/renderer/src/features/transfers/TransferCenter'
 import {
   formatBytes,
   formatEta,
   formatSpeed,
   useTransferTasks
-} from '../../src/renderer/src/hooks/useTransferTasks'
-import { emitTransferEvent, installFakeApi, renderWithI18n } from './helpers'
+} from '../../src/renderer/src/features/transfers/useTransferTasks'
+import { emitTransferEvent, installFakeApi, renderWithI18n } from '../support/helpers'
 import type { TransferTask } from '../../src/shared/types'
 
 describe('Transfer formatters', () => {

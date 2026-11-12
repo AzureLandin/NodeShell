@@ -18,6 +18,9 @@
     "auth": "Authentication",
     "password": "Password",
     "passwordLeaveBlank": "Leave blank to keep unchanged",
+    "nameRequired": "Name is required",
+    "hostRequired": "Host is required",
+    "usernameRequired": "Username is required",
     "passwordRequired": "Password is required",
     "showPassword": "Show",
     "hidePassword": "Hide",
@@ -34,6 +37,7 @@
     "saving": "Saving…"
   },
   "session": {
+    "tabsLabel": "Sessions",
     "close": "Close",
     "disconnected": "Session disconnected",
     "error": "Connection error",
@@ -285,6 +289,12 @@
     "portLabel": "Port {{port}} on {{bind}}"
   },
   "hostsPicker": {
+    "refresh": "Refresh hosts",
+    "retry": "Retry loading hosts",
+    "loading": "Loading hosts…",
+    "loadFailed": "Failed to load hosts",
+    "refreshFailed": "The host list could not be refreshed; showing the last confirmed data. Successful operations do not need to be repeated.",
+    "deleteFailed": "Failed to delete host",
     "open": "Hosts",
     "title": "Host Manager",
     "subtitle": "Manage saved remote hosts and connections",

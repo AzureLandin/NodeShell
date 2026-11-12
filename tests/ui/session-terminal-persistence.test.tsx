@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../src/renderer/src/App'
-import { emitSessionEvent, installFakeApi, renderWithI18n, type FakeApi } from './helpers'
+import { emitSessionEvent, installFakeApi, renderWithI18n, type FakeApi } from '../support/helpers'
 import type { AppSettings, HostConfig } from '../../src/shared/types'
+import { burstPayloads } from '../support/terminal-payloads'
 
 interface MockTermInstance {
   cols: number
@@ -32,6 +33,7 @@ vi.mock('@xterm/xterm', () => {
     write = vi.fn()
     dispose = vi.fn()
     onData = vi.fn(() => ({ dispose: vi.fn() }))
+    attachCustomKeyEventHandler = vi.fn()
     container: HTMLElement | null = null
 
     constructor() {
@@ -105,7 +107,66 @@ function hostRow(name: string): HTMLElement {
   return node as HTMLElement
 }
 
+async function connectHost(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+): Promise<HTMLElement> {
+  await openHostsPicker(user)
+  await user.click(within(hostRow(name)).getByRole('button', { name: 'Connect' }))
+  const tab = await screen.findByRole('tab', { name })
+  await waitFor(() => expect(tab).toHaveAttribute('aria-selected', 'true'))
+  return tab
+}
+
+function threeHosts(): HostConfig[] {
+  return [
+    makeHost({ id: 'h1', name: 'Alpha' }),
+    makeHost({ id: 'h2', name: 'Beta' }),
+    makeHost({ id: 'h3', name: 'Gamma' })
+  ]
+}
+
 describe('Session Terminal Persistence', () => {
+  it('preserves 800 mixed output chunks across four sessions, tab switches and disposal', async () => {
+    const names = ['Load Alpha', 'Load Beta', 'Load Gamma', 'Load Delta']
+    const hosts = names.map((name, index) => makeHost({ id: `load-${index}`, name }))
+    const fake = await renderApp(hosts)
+    fake.mocks.sessions.connect.mockImplementation(async (id: string) => ({ sessionId: id }))
+    const user = userEvent.setup()
+    const tabs: HTMLElement[] = []
+    for (const name of names) tabs.push(await connectHost(user, name))
+    const terminals = [...mockInstances]
+    const payloads = names.map((_name, index) => burstPayloads(`session-${index}`, 200))
+    for (let round = 0; round < 8; round += 1) {
+      act(() => {
+        for (let index = 0; index < hosts.length; index += 1) {
+          for (const data of payloads[index].slice(round * 25, (round + 1) * 25)) {
+            emitSessionEvent(fake, 'data', { sessionId: hosts[index].id, data })
+          }
+        }
+      })
+      await user.click(tabs[round % tabs.length])
+    }
+    await waitFor(() => {
+      for (let index = 0; index < terminals.length; index += 1) {
+        expect(terminals[index].write.mock.calls.map(([data]) => data).join('')).toBe(
+          payloads[index].join('')
+        )
+      }
+    })
+    expect(mockInstances).toHaveLength(4)
+    expect(fake.mocks.sessions.onData).toHaveBeenCalledTimes(1)
+    for (const terminal of terminals) expect(terminal.dispose).not.toHaveBeenCalled()
+    for (const name of names)
+      await user.click(screen.getByRole('button', { name: `Close ${name}` }))
+    for (const terminal of terminals) expect(terminal.dispose).toHaveBeenCalledTimes(1)
+    const writes = terminals.map((terminal) => terminal.write.mock.calls.length)
+    act(() => {
+      for (const host of hosts) emitSessionEvent(fake, 'data', { sessionId: host.id, data: 'late' })
+    })
+    expect(terminals.map((terminal) => terminal.write.mock.calls.length)).toEqual(writes)
+  }, 15000)
+
   it('retains xterm instances and does not dispose when switching between tabs', async () => {
     const fake = await renderApp([
       makeHost({ id: 'h1', name: 'Alpha', host: '10.0.0.1' }),
@@ -175,6 +236,138 @@ describe('Session Terminal Persistence', () => {
     expect(mockInstances.length).toBe(2)
     expect(termA.dispose).not.toHaveBeenCalled()
     expect(termB.dispose).not.toHaveBeenCalled()
+    expect(termA.onData).toHaveBeenCalledTimes(1)
+    expect(termB.onData).toHaveBeenCalledTimes(1)
+    expect(fake.mocks.sessions.onData).toHaveBeenCalledTimes(1)
+  })
+
+  it('navigates session tabs with arrows and Home/End while keeping associated panels mounted', async () => {
+    const fake = await renderApp(threeHosts())
+    fake.mocks.sessions.connect.mockImplementation((hostId: string) =>
+      Promise.resolve({ sessionId: hostId })
+    )
+    const user = userEvent.setup()
+    const alpha = await connectHost(user, 'Alpha')
+    const beta = await connectHost(user, 'Beta')
+    const gamma = await connectHost(user, 'Gamma')
+    const list = screen.getByRole('tablist', { name: 'Sessions' })
+    const panels = [alpha, beta, gamma].map((tab) => {
+      expect(tab.tagName).toBe('BUTTON')
+      expect(tab.querySelector('button')).toBeNull()
+      const panel = document.getElementById(tab.getAttribute('aria-controls')!)!
+      expect(panel).toHaveAttribute('role', 'tabpanel')
+      expect(panel).toHaveAttribute('aria-labelledby', tab.id)
+      return panel
+    })
+    for (const selector of [
+      '.hosts-launcher',
+      '.session-tab-add',
+      '.session-transfer-toggle',
+      '.session-agent-toggle'
+    ]) {
+      expect(list.contains(document.querySelector(selector))).toBe(false)
+    }
+    expect(panels[0]).toHaveAttribute('hidden')
+    expect(panels[0]).toHaveAttribute('inert')
+    expect(panels[2]).not.toHaveAttribute('hidden')
+
+    await user.click(alpha)
+    await user.keyboard('{ArrowRight}')
+    await waitFor(() => expect(beta).toHaveFocus())
+    expect(beta).toHaveAttribute('aria-selected', 'true')
+    expect(beta).toHaveAttribute('tabindex', '0')
+    expect(alpha).toHaveAttribute('tabindex', '-1')
+    await user.keyboard('{End}')
+    await waitFor(() => expect(gamma).toHaveFocus())
+    expect(gamma).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Home}')
+    await waitFor(() => expect(alpha).toHaveFocus())
+    expect(alpha).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{ArrowLeft}')
+    await waitFor(() => expect(gamma).toHaveFocus())
+    expect(gamma).toHaveAttribute('aria-selected', 'true')
+    for (const panel of panels) expect(panel).toBeInTheDocument()
+    expect(mockInstances).toHaveLength(3)
+    for (const term of mockInstances) {
+      expect(term.dispose).not.toHaveBeenCalled()
+      expect(term.onData).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it.each([
+    ['Alpha', 'Gamma', 0],
+    ['Beta', 'Gamma', 1],
+    ['Gamma', 'Beta', 2]
+  ] as const)(
+    'closes active %s and preserves the existing last-remaining selection rule',
+    async (name, next, index) => {
+      const fake = await renderApp(threeHosts())
+      fake.mocks.sessions.connect.mockImplementation((hostId: string) =>
+        Promise.resolve({ sessionId: hostId })
+      )
+      const user = userEvent.setup()
+      for (const host of ['Alpha', 'Beta', 'Gamma']) await connectHost(user, host)
+      await user.click(screen.getByRole('tab', { name }))
+      const close = screen.getByRole('button', { name: `Close ${name}` })
+      act(() => close.focus())
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(screen.queryByRole('tab', { name })).not.toBeInTheDocument())
+      const nextTab = screen.getByRole('tab', { name: next })
+      expect(nextTab).toHaveAttribute('aria-selected', 'true')
+      expect(nextTab).toHaveFocus()
+      expect(mockInstances[index]!.dispose).toHaveBeenCalledTimes(1)
+      mockInstances.forEach((term, otherIndex) => {
+        if (otherIndex !== index) expect(term.dispose).not.toHaveBeenCalled()
+      })
+    }
+  )
+
+  it('closes inactive tabs without changing selection and focuses Hosts after the final tab closes', async () => {
+    const fake = await renderApp(threeHosts())
+    fake.mocks.sessions.connect.mockImplementation((hostId: string) =>
+      Promise.resolve({ sessionId: hostId })
+    )
+    const user = userEvent.setup()
+    for (const host of ['Alpha', 'Beta', 'Gamma']) await connectHost(user, host)
+    for (const name of ['Alpha', 'Beta']) {
+      await user.click(screen.getByRole('button', { name: `Close ${name}` }))
+      await waitFor(() => expect(screen.queryByRole('tab', { name })).not.toBeInTheDocument())
+      expect(screen.getByRole('tab', { name: 'Gamma' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('tab', { name: 'Gamma' })).toHaveFocus()
+    }
+    await user.click(screen.getByRole('button', { name: 'Close Gamma' }))
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('tablist', { name: 'Sessions' })).queryAllByRole('tab')
+      ).toHaveLength(0)
+    )
+    expect(screen.getByRole('button', { name: 'Hosts' })).toHaveFocus()
+    for (const term of mockInstances) expect(term.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not take focus from a dialog opened while closing awaits IPC', async () => {
+    const fake = await renderApp([makeHost({ name: 'Alpha' })])
+    fake.mocks.sessions.connect.mockResolvedValue({ sessionId: 's1' })
+    let finishClose!: () => void
+    fake.mocks.sessions.disconnect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve
+        })
+    )
+    const user = userEvent.setup()
+    await connectHost(user, 'Alpha')
+    await user.click(screen.getByRole('button', { name: 'Close Alpha' }))
+    await openHostsPicker(user)
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('textbox'))
+    const focused = document.activeElement
+    expect(dialog.contains(focused)).toBe(true)
+    await act(async () => finishClose())
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'Alpha' })).not.toBeInTheDocument()
+    )
+    expect(document.activeElement).toBe(focused)
   })
 
   it('routes background output to inactive session terminal instance', async () => {
@@ -209,6 +402,68 @@ describe('Session Terminal Persistence', () => {
     expect(termA.dispose).not.toHaveBeenCalled()
   })
 
+  it('closes a pending tab without mounting a terminal or releasing an existing terminal', async () => {
+    const fake = await renderApp([
+      makeHost({ id: 'h1', name: 'Alpha' }),
+      makeHost({ id: 'h2', name: 'SlowServer' })
+    ])
+    fake.mocks.sessions.connect.mockImplementation((hostId: string) =>
+      hostId === 'h1' ? Promise.resolve({ sessionId: 's1' }) : new Promise(() => {})
+    )
+    const user = userEvent.setup()
+    const alpha = await connectHost(user, 'Alpha')
+    const term = mockInstances[0]!
+    const pending = await connectHost(user, 'SlowServer')
+    const pendingPanel = document.getElementById(pending.getAttribute('aria-controls')!)!
+    expect(pendingPanel).toHaveAttribute('aria-labelledby', pending.id)
+    expect(within(pendingPanel).getByRole('status')).toBeInTheDocument()
+    expect(mockInstances).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Close SlowServer' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'SlowServer' })).not.toBeInTheDocument()
+    )
+    expect(fake.mocks.sessions.cancelConnect).toHaveBeenCalledTimes(1)
+    expect(fake.mocks.sessions.disconnect).not.toHaveBeenCalled()
+    expect(alpha).toHaveAttribute('aria-selected', 'true')
+    expect(alpha).toHaveFocus()
+    expect(term.dispose).not.toHaveBeenCalled()
+    expect(mockInstances).toHaveLength(1)
+  })
+
+  it('retains the old terminal through a slow failed reconnect and replaces it only after success', async () => {
+    const fake = await renderApp([makeHost({ name: 'Alpha' })])
+    let failReconnect!: (error: Error) => void
+    fake.mocks.sessions.connect
+      .mockResolvedValueOnce({ sessionId: 's1' })
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failReconnect = reject
+          })
+      )
+      .mockResolvedValueOnce({ sessionId: 's2' })
+    const user = userEvent.setup()
+    const tab = await connectHost(user, 'Alpha')
+    const panel = document.getElementById(tab.getAttribute('aria-controls')!)!
+    const term = mockInstances[0]!
+    act(() => emitSessionEvent(fake, 'closed', { sessionId: 's1' }))
+    await user.click(await screen.findByRole('button', { name: 'Reconnect' }))
+    expect(within(panel).getByRole('status')).toBeInTheDocument()
+    expect(term.container).toBeInTheDocument()
+    expect(term.dispose).not.toHaveBeenCalled()
+    act(() => emitSessionEvent(fake, 'data', { sessionId: 's1', data: 'retained-tail' }))
+    await waitFor(() => expect(term.write).toHaveBeenCalledWith('retained-tail'))
+    await act(async () => failReconnect(new Error('Reconnect unavailable')))
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument()
+    expect(document.getElementById(tab.getAttribute('aria-controls')!)).toBe(panel)
+    expect(mockInstances).toHaveLength(1)
+    expect(term.dispose).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => expect(mockInstances).toHaveLength(2))
+    expect(term.dispose).toHaveBeenCalledTimes(1)
+    expect(mockInstances[1]!.dispose).not.toHaveBeenCalled()
+  })
+
   it('keeps existing terminal instances mounted during a slow pending connection', async () => {
     const fake = await renderApp([
       makeHost({ id: 'h1', name: 'Alpha', host: '10.0.0.1' }),
@@ -241,6 +496,10 @@ describe('Session Terminal Persistence', () => {
     // Alpha's terminal must NOT be disposed during this connecting state
     expect(termA.dispose).not.toHaveBeenCalled()
 
+    const pendingTab = screen.getByRole('tab', { name: 'SlowServer' })
+    await user.click(pendingTab)
+    expect(pendingTab).toHaveFocus()
+
     // Now resolve the connection
     await act(async () => {
       resolveSlowConnect({ sessionId: 's2' })
@@ -248,6 +507,8 @@ describe('Session Terminal Persistence', () => {
 
     const slowTab = await screen.findByRole('tab', { name: /SlowServer/ })
     expect(slowTab).toHaveAttribute('aria-selected', 'true')
+    expect(slowTab).not.toBe(pendingTab)
+    expect(slowTab).toHaveFocus()
     expect(mockInstances.length).toBe(2)
     expect(termA.dispose).not.toHaveBeenCalled()
   })

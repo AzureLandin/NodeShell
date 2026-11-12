@@ -8,14 +8,14 @@
     "scripts": {
         "format": "prettier --write .",
         "lint": "eslint --cache .",
-        "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
-        "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
-        "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+        "typecheck:node": "tsc --noEmit -p config/tsconfig.node.json --composite false",
+        "typecheck:web": "tsc --noEmit -p config/tsconfig.web.json --composite false",
+        "typecheck:test": "tsc --noEmit -p config/tsconfig.test.json",
         "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:test",
-        "build:wails": "vite build",
-        "dev:wails": "vite dev",
-        "test": "vitest run",
-        "test:watch": "vitest"
+        "build:wails": "vite build --config config/vite.config.ts",
+        "dev:wails": "vite dev --config config/vite.config.ts",
+        "test": "vitest run --config config/vitest.config.ts",
+        "test:watch": "vitest --config config/vitest.config.ts"
     },
     "dependencies": {
         "@base-ui/react": "^1.9.0",
@@ -42,8 +42,10 @@
         "@fortawesome/fontawesome-svg-core": "^7.3.1",
         "@fortawesome/free-solid-svg-icons": "^7.3.1",
         "@fortawesome/react-fontawesome": "^3.5.0",
+        "@tanstack/react-query": "5.107.1",
         "codemirror": "^6.0.2",
         "i18next": "^26.3.6",
+        "react-hook-form": "7.92.0",
         "react-i18next": "^17.0.9",
         "react-markdown": "^10.1.0",
         "remark-gfm": "^4.0.1"

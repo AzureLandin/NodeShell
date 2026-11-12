@@ -74,6 +74,27 @@ export default defineConfig(
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
   {
+    files: ['src/renderer/src/**/*.{ts,tsx}'],
+    ignores: ['src/renderer/src/ui/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@base-ui/react', '@base-ui/react/*'],
+              message: 'Import application primitives from ui/ instead of Base UI directly.'
+            },
+            {
+              group: ['**/ui/toast', '**/ui/use-toast-manager', '**/ui/notification-context'],
+              message: 'Publish notifications through ui/use-notify; toast internals belong to ui/.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     settings: {
       react: {
         version: 'detect'

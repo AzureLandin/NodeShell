@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { TerminalView } from '../../src/renderer/src/components/TerminalView'
-import { installFakeApi, renderWithI18n } from './helpers'
+import userEvent from '@testing-library/user-event'
+import { TerminalView } from '../../src/renderer/src/features/sessions/TerminalView'
+import { installFakeApi, renderWithI18n } from '../support/helpers'
 
 vi.mock('@xterm/xterm', () => {
   const instances: MockTerminal[] = []
@@ -11,11 +12,27 @@ vi.mock('@xterm/xterm', () => {
     rows = 24
     options: Record<string, unknown>
     selection = ''
+    textarea = document.createElement('textarea')
+    keyHandler: ((event: KeyboardEvent) => boolean) | undefined
+    dataHandler: ((data: string) => void) | undefined
     loadAddon = vi.fn()
-    open = vi.fn()
+    open = vi.fn((container: HTMLElement) => {
+      container.append(this.textarea)
+      this.textarea.addEventListener('keydown', (event) => {
+        if (this.keyHandler?.(event) === false) return
+        if (event.key === 'Escape') this.dataHandler?.('\u001b')
+        else if (event.key.length === 1) this.dataHandler?.(event.key)
+      })
+    })
     write = vi.fn()
     dispose = vi.fn()
-    onData = vi.fn(() => ({ dispose: vi.fn() }))
+    onData = vi.fn((handler: (data: string) => void) => {
+      this.dataHandler = handler
+      return { dispose: vi.fn() }
+    })
+    attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      this.keyHandler = handler
+    })
     getSelection = vi.fn(() => this.selection)
     clear = vi.fn()
     clearSelection = vi.fn()
@@ -48,6 +65,8 @@ vi.mock('@xterm/addon-unicode-graphemes', () => {
 type MockTerminal = {
   options: Record<string, unknown>
   selection: string
+  textarea: HTMLTextAreaElement
+  keyHandler: (event: KeyboardEvent) => boolean
   getSelection: ReturnType<typeof vi.fn>
   clear: ReturnType<typeof vi.fn>
   clearSelection: ReturnType<typeof vi.fn>
@@ -67,19 +86,24 @@ async function latestTerminal(): Promise<MockTerminal> {
 }
 
 describe('TerminalView context menu', () => {
-  function renderView(): { container: HTMLElement } {
-    installFakeApi()
-    const { container } = renderWithI18n(
+  const registerDataListener = (): (() => void) => () => undefined
+  function view(visible = true): React.JSX.Element {
+    return (
       <TerminalView
         sessionId="s1"
-        registerDataListener={() => () => undefined}
-        visible={true}
+        registerDataListener={registerDataListener}
+        visible={visible}
         fontFamily="Hack"
         fontSize={14}
         resolvedTheme="dark"
       />
     )
-    return { container }
+  }
+  function renderView(): ReturnType<typeof renderWithI18n> & {
+    fake: ReturnType<typeof installFakeApi>
+  } {
+    const fake = installFakeApi()
+    return { ...renderWithI18n(view()), fake }
   }
 
   it('loads grapheme width handling and the WebGL renderer after open', async () => {
@@ -170,7 +194,54 @@ describe('TerminalView context menu', () => {
       clientY: 120
     })
     await screen.findByRole('menu')
-    fireEvent.mouseDown(document.body)
+    await userEvent.click(document.body)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+  })
+
+  it('blocks remote input while open, then restores terminal focus and ordinary Escape', async () => {
+    const user = userEvent.setup()
+    const { container, fake } = renderView()
+    const term = await latestTerminal()
+    term.textarea.focus()
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement)
+    await screen.findByRole('menu')
+    // xterm may still own focus when the native contextmenu event arrives.
+    fireEvent.keyDown(term.textarea, { key: 'x' })
+    expect(term.keyHandler(new KeyboardEvent('keydown', { key: 'ArrowDown' }))).toBe(false)
+    expect(fake.mocks.sessions.write).not.toHaveBeenCalled()
+    await user.keyboard('{ArrowDown}{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    await waitFor(() => expect(term.textarea).toHaveFocus())
+    expect(fake.mocks.sessions.write).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}x')
+    expect(fake.mocks.sessions.write).toHaveBeenNthCalledWith(1, 's1', '\u001b')
+    expect(fake.mocks.sessions.write).toHaveBeenNthCalledWith(2, 's1', 'x')
+  })
+
+  it('updates the selection when right-clicking again without creating another menu', async () => {
+    const { container } = renderView()
+    const term = await latestTerminal()
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement, { clientX: 10, clientY: 20 })
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toHaveAttribute('aria-disabled', 'true')
+    term.getSelection.mockReturnValue('new selection')
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement, {
+      clientX: 100,
+      clientY: 120
+    })
+    expect(screen.getAllByRole('menu')).toHaveLength(1)
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toHaveAttribute('aria-disabled', 'false')
+  })
+
+  it('closes when hidden and releases the portal on unmount', async () => {
+    const { container, rerender, unmount } = renderView()
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement)
+    await screen.findByRole('menu')
+    rerender(view(false))
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    rerender(view())
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement)
+    await screen.findByRole('menu')
+    unmount()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 })

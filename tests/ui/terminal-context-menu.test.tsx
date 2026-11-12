@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { fireEvent, screen } from '@testing-library/react'
-import { TerminalContextMenu } from '../../src/renderer/src/components/TerminalContextMenu'
-import { renderWithI18n } from './helpers'
+import userEvent from '@testing-library/user-event'
+import { TerminalContextMenu } from '../../src/renderer/src/features/sessions/TerminalContextMenu'
+import { renderWithI18n } from '../support/helpers'
 
 interface MenuHarness {
   onCopy: ReturnType<typeof vi.fn>
@@ -12,23 +14,31 @@ interface MenuHarness {
   unmount: () => void
 }
 
-/** Render the menu with fresh spies; the menu closes itself after an item. */
+/** The host accepts close requests; the menu never mirrors that state. */
 function renderMenu(canCopy = true): MenuHarness {
   const onCopy = vi.fn()
   const onPaste = vi.fn()
   const onClear = vi.fn()
   const onClose = vi.fn()
-  const view = renderWithI18n(
-    <TerminalContextMenu
-      x={10}
-      y={20}
-      canCopy={canCopy}
-      onCopy={onCopy}
-      onPaste={onPaste}
-      onClear={onClear}
-      onClose={onClose}
-    />
-  )
+  function Host(): React.JSX.Element {
+    const [open, setOpen] = useState(true)
+    return (
+      <TerminalContextMenu
+        open={open}
+        x={10}
+        y={20}
+        canCopy={canCopy}
+        onCopy={onCopy}
+        onPaste={onPaste}
+        onClear={onClear}
+        onClose={() => {
+          onClose()
+          setOpen(false)
+        }}
+      />
+    )
+  }
+  const view = renderWithI18n(<Host />)
   return { onCopy, onPaste, onClear, onClose, unmount: view.unmount }
 }
 
@@ -36,6 +46,7 @@ describe('TerminalContextMenu', () => {
   it('renders Copy, Paste, and Clear Screen items', () => {
     renderWithI18n(
       <TerminalContextMenu
+        open
         x={10}
         y={20}
         canCopy={true}
@@ -54,6 +65,7 @@ describe('TerminalContextMenu', () => {
   it('separates clipboard actions from Clear Screen with a divider', () => {
     renderWithI18n(
       <TerminalContextMenu
+        open
         x={0}
         y={0}
         canCopy={true}
@@ -89,6 +101,38 @@ describe('TerminalContextMenu', () => {
     const harness = renderMenu(false)
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }))
     expect(harness.onCopy).not.toHaveBeenCalled()
+    expect(harness.onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+  })
+
+  it('leaves visibility under host control when a close request is not accepted', () => {
+    const onClose = vi.fn()
+    renderWithI18n(
+      <TerminalContextMenu
+        open
+        x={0}
+        y={0}
+        canCopy
+        onCopy={vi.fn()}
+        onPaste={vi.fn()}
+        onClear={vi.fn()}
+        onClose={onClose}
+      />
+    )
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+  })
+
+  it('selects an enabled action with the keyboard and closes through the host', async () => {
+    const harness = renderMenu(false)
+    const user = userEvent.setup()
+    screen.getByRole('menu').focus()
+    await user.keyboard('{End}{Enter}')
+    expect(harness.onClear).toHaveBeenCalledTimes(1)
+    expect(harness.onCopy).not.toHaveBeenCalled()
+    expect(harness.onClose).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it('invokes the action callbacks and closes the menu on select', () => {
