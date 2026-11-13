@@ -36,7 +36,7 @@ describe('CI workflow structure', () => {
   it('ci.yml targets all three native platforms', () => {
     const yaml = readYaml('.github/workflows/ci.yml')
     expect(yaml).toContain('windows-latest')
-    expect(yaml).toContain('macos-14')
+    expect(yaml).toContain('macos-15')
     expect(yaml).toContain('ubuntu-latest')
   })
 
