@@ -32,7 +32,7 @@ jobs:
             smoke-target: build/bin/nodeshell.exe
             artifact-path: build/bin/*installer.exe
           - platform: macos
-            runner: macos-14
+            runner: macos-15
             wails-args: -platform darwin/arm64
             # Keep race off until CI logs show the linux/mac hang is fixed;
             # packaging coverage matters more for auto-build right now.
