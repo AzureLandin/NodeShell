@@ -209,6 +209,12 @@ describe('packaging scripts', () => {
     expect(macos).toContain('hdiutil detach "/Volumes/NodeShell"')
   })
 
+  it('package-macos.sh includes an Applications drop link in the DMG', () => {
+    expect(macos).toContain('ditto "$bin" "$dmg_stage/$(basename "$bin")"')
+    expect(macos).toContain('ln -s /Applications "$dmg_stage/Applications"')
+    expect(macos).toContain('-srcfolder "$dmg_stage"')
+  })
+
   it('package-linux.sh takes the version as a parameter, not a hardcoded literal', () => {
     expect(linux).toMatch(/version="\$\{5[^}]*\}"/)
     expect(linux).not.toContain('2.0.0')

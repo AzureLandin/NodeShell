@@ -13,13 +13,18 @@ fi
 # ZIP
 ditto -c -k --keepParent "$bin" "$out/$name.zip"
 # DMG
+# Stage the app bundle alongside the standard drag-to-Applications alias.
+dmg_stage="$(mktemp -d "${TMPDIR:-/tmp}/nodeshell-dmg.XXXXXX")"
+trap 'rm -rf "$dmg_stage"' EXIT
+ditto "$bin" "$dmg_stage/$(basename "$bin")"
+ln -s /Applications "$dmg_stage/Applications"
 # hdiutil occasionally reports "Resource busy" on shared macOS runners.
 # Retry after detaching a stale mount and removing the partial image.
 dmg="$out/$name.dmg"
 created=0
 for attempt in 1 2 3; do
   rm -f "$dmg"
-  if hdiutil create -volname "NodeShell" -srcfolder "$bin" -ov -format UDZO "$dmg"; then
+  if hdiutil create -volname "NodeShell" -srcfolder "$dmg_stage" -ov -format UDZO "$dmg"; then
     created=1
     break
   fi
