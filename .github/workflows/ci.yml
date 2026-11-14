@@ -323,4 +323,4 @@ jobs:
           draft: true
           generate_release_notes: true
           body: |
-            Snap packaging is not included in this release; it will be restored once the Wails packaging chain is reproducible. Linux AppImage, .deb, .rpm and .pkg.tar.zst are provided.
+            macOS DMG now includes an Applications shortcut for drag-and-drop installation.
